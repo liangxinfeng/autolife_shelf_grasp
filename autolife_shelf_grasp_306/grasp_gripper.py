@@ -1,7 +1,8 @@
 """DM夹爪抓取：按时间输出有界位置目标，避免反馈推进停顿被误判为接触。
 
 原厂整段抓取和放置共用。仍通过原厂夹爪话题；不改电流/力矩/驱动响应。
-这里的接触是几何与静止反馈的候选证据，并非力传感器确认。
+开合按原有受限速度发送至目标，位置残差只记录，不延长或中断动作。
+进入物体/退出物体所需净开口仍按真实路径要求检查，不宣称夹牢或释放成功。
 """
 from collections import deque
 import math
@@ -57,11 +58,16 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
     target_width=float(np.interp(goal,positions[::-1],widths[::-1]))
     if clear_width is not None and (closing or not math.isfinite(clear_width) or not 0<clear_width<=target_width):
         raise ValueError('物品释放所需开口超出夹爪范围，请重新规划')
-    stable=None;last_send=-float('inf');last_report=-float('inf');command=start[jaw]
+    minimum=(state.get('minimum_opening_mm') or object_width_m*1000) if opening_width is not None else ((object_width_m*1000 if object_width_m>0 else release_width) if release_width is not None else None)
+    if minimum is not None and (not math.isfinite(minimum) or not 0<minimum<=clear_width or minimum+1e-6<object_width_m*1000):
+        raise ValueError('路径所需夹爪净开口无效，请重新规划')
+    effective_clear_width=minimum
+    last_send=-float('inf');last_report=-float('inf');command=start[jaw]
     # 本执行器独占夹爪指令。其他手的夹爪保持本段开始时的实际开度。
     node._active_goals.pop('grippers',None);node.progress_watch.pop('grippers',None)
     while True:
         q=checked();now=clock()
+        if not all(math.isfinite(float(q[n])) for n in targets):raise ValueError('夹爪反馈无效')
         if now-last_send>=1./60:
             t=min(1.,max(0.,(now-begin)/duration))
             command=start[jaw]+(goal-start[jaw])*(t*t*(3.-2.*t))
@@ -70,25 +76,25 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
                 'left_gripper_target_joints_position':[values['Joint_Left_Gripper']],
                 'right_gripper_target_joints_position':[values['Joint_Right_Gripper']]})
             node._last_operator_activity=time.monotonic();last_send=now
-        result=None
-        if closing:result=evidence.update(now,q[jaw],command)
-        elif (abs(command-goal)<1e-6 and abs(q[jaw]-goal)<=state['tolerance'] if clear_width is None else
-                math.isfinite(q[jaw]) and positions[-1]-state['tolerance']<=q[jaw]<=positions[0] and
-                float(np.interp(q[jaw],positions[::-1],widths[::-1]))>=clear_width):
-            if stable is None:stable=now
-            if now-stable>=.2:result='released' if release_width is not None else 'opening_clear' if opening_width is not None else 'at_target'
-        else:stable=None
-        if now-last_report>=.2:
+        result=evidence.update(now,q[jaw],command) if closing else None
+        issued=abs(command-goal)<1e-6 and now-begin>=duration
+        if now-last_report>=.2 or issued:
             report(dict(targets_deg=targets,commanded_deg=command,measured_deg={n:q[n] for n in targets},
                 nominal_width_mm=float(np.interp(q[jaw],positions[::-1],widths[::-1])),
                 release_width_mm=release_width,required_opening_mm=opening_width,
-                closing=closing,time=now,phase='ramping' if abs(command-goal)>1e-6 else 'settling'))
+                minimum_opening_mm=minimum,effective_clear_width_mm=effective_clear_width,
+                closing=closing,time=now,phase='command_complete' if issued else 'ramping',
+                arrival_required=False,position_error=float(q[jaw]-goal),physical_grip_verified=False))
             last_report=now
-        if result:
+        if issued:
+            # 精确位置量与夹住/松开并不等价；不再等待目标残差归零。
+            # 抓放路径有实际净开口要求时，只核对必要间隙，不要求全开90mm。
+            actual_width=float(np.interp(q[jaw],positions[::-1],widths[::-1]))
+            if not closing and minimum is not None and actual_width+1e-6<minimum:
+                hold(node,['grippers'])
+                raise ValueError(f'当前夹爪净开口{actual_width:.1f}mm小于路径所需{minimum:.1f}mm')
             if not closing:hold(node,['grippers'])
-            # 闭合结束继续保持已发送目标，不改写为较松的测量开口。
-            return result
-        if now-begin>duration+4.:
-            hold(node,['grippers'])
-            raise ValueError(f'夹爪闭合未形成有效夹持：实测位置量{q[jaw]:.1f}/目标{goal:.1f}；请检查开口与物品位置' if closing
-                else f'夹爪张开未到位：实测位置量{q[jaw]:.1f}/目标{goal:.1f}')
+            if release_width is not None:return 'released'
+            if opening_width is not None:return 'opening_clear'
+            # 闭合后的原目标必须继续保持，不能用受物体阻挡的实际开口改写。
+            return result or 'command_completed_unverified'

@@ -25,3 +25,17 @@ def starts_with_grasp(record):
 
 def needs_grasp_preparation(record):
     return any(row['kind'] == 'grasp' for row in (record or {}).get('steps', []))
+
+
+def worker_required_now(owner):
+    """只按当前阶段判断视觉依赖，不用后续抓取步骤取消正在进行的导航。"""
+    visual=getattr(getattr(owner,'studio',None),'visual',None)
+    if visual is not None and visual.busy:return True
+    automatic=getattr(owner,'automatic',None)
+    if automatic is not None and automatic.active and automatic.phase=='preparing':return True
+    flow=getattr(owner,'workflow',None)
+    if flow is not None and flow.active:
+        if flow.phase in ('prepare','scan','plan','confirm'):return True
+        return flow.phase=='place' and owner.demo_phase=='planning'
+    # 独立抓放演示仍保留原有退出处理；这里只缩小编排任务的依赖范围。
+    return bool(getattr(owner,'demo_active',False) or getattr(owner,'placement_active',False))

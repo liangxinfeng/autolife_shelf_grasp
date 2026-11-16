@@ -78,13 +78,38 @@ class VendorGraspPlanner(Planner):
         # 原厂IK精确解完整位姿，不重复尝试同一求解的“软朝向”分支。
         # 先求预抓端点并预检关节空间过渡，再考虑直线接近。
         if yaws is None:yaws=[0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.]
-        yaws=list(yaws);self.total_candidates=len(yaws)*5;self.current_candidate=0
+        yaws=list(yaws);self.total_candidates=len(yaws)*6;self.current_candidate=0
         for yaw in yaws:
-            for profile in ('joint_direct','joint_elbow_positive','joint_elbow_negative','direct','outward_8'):
+            for profile in ('joint_direct','joint_from_grasp','joint_elbow_positive','joint_elbow_negative','direct','outward_8'):
                 self.current_candidate+=1
                 self.context.set_stage('候选路径',arm=self.cfg['arm'],
                     candidate=self.current_candidate,total_candidates=self.total_candidates)
                 yield yaw,False,profile
+
+    def grasp_attitude_feasible(self,source,tcp,center,rotation,product):
+        """先排除抓点不可达或收回终点不兼容的朝向；同一请求不重复逆解。"""
+        self.context.checkpoint()
+        key=(tuple(np.round(tcp,9)),tuple(np.round(center,9)),tuple(np.round(rotation.ravel(),9)))
+        cached=self._attitude_cache.get(key)
+        if cached is not None:return cached
+        if self.cfg.get('fixed_carry_enabled',False) and self.has_common_carry_target():
+            _,end_R=self.pose(self.carry_target(source),tcp)
+            up=np.asarray(self.cfg['up_torso'])
+            tilt=np.rad2deg(np.arccos(np.clip((end_R.T@up)@(rotation.T@up),-1.,1.)))
+            if tilt>float(self.cfg.get('carry_max_tilt_deg',45.)):
+                self._attitude_cache[key]=False;return False
+        try:self.solve(source,tcp,center,rotation)
+        except IKFailure:self._attitude_cache[key]=False;return False
+        self._attitude_cache[key]=True;return True
+
+    def pregrasp_from_contact(self,source,tcp,center,endpoint,rotation,product):
+        """从已可达抓点反推接近支路，避免预抓点落在无法连续进入物体的另一IK支路。"""
+        previous=self.solve(source,tcp,center,rotation)
+        count=max(2,int(np.ceil(np.linalg.norm(endpoint-center)/.008))+1)
+        for t in np.linspace(0,1,count)[1:]:
+            previous=self.solve(previous,tcp,center+t*(endpoint-center),rotation)
+            self.check(previous,tcp,False,product)
+        return previous
 
     def carry_target(self, source):
         goal = carry_goal(self.cfg, source, self.arm_names)
@@ -146,6 +171,7 @@ class VendorGraspPlanner(Planner):
         return position+rotation@tcp,rotation.copy()
 
     def configure_source(self, source):
+        self._solve_cache={}
         self.source = dict(source)
         self.anchor = self.fk.fk(BASE, TORSO, source)
         tree = ET.parse(self.cfg['urdf_path']).getroot()
@@ -190,6 +216,7 @@ class VendorGraspPlanner(Planner):
 
     @grasp_scope
     def plan(self, source, tcp, center, product):
+        self.bounded_seed_recoveries=0;self._attitude_cache={}
         self.configure_source(source)
         try:
             plan = super().plan(source, tcp, center, product)
@@ -245,6 +272,7 @@ class VendorGraspPlanner(Planner):
                             raise IKFailure('原厂插值持物倾角超出配置')
                     checks += 1
         plan['native_checked_states'] = checks
+        plan['bounded_seed_recoveries']=self.bounded_seed_recoveries
         return plan
 
     def check(self,q,tcp,carrying,product):
@@ -252,6 +280,23 @@ class VendorGraspPlanner(Planner):
         return super().check(q,tcp,carrying,product)
 
     def solve(self, source, tcp, point, rotation, flexible=False, limit_deg=None,
+              posture_target=None, global_goal=False, retreat_freedom=0., free_heading=False):
+        self.context.checkpoint()
+        key=(tuple(sorted(source.items())),tuple(np.asarray(tcp)),tuple(np.asarray(point)),tuple(np.asarray(rotation).ravel()),
+             flexible,limit_deg,global_goal,retreat_freedom,free_heading,
+             None if posture_target is None else tuple(np.asarray(posture_target).ravel()))
+        cache=getattr(self,'_solve_cache',None)
+        if cache is None:self._solve_cache=cache={}
+        hit=cache.get(key)
+        if hit is not None:
+            if isinstance(hit,str):raise IKFailure(hit)
+            return dict(hit)
+        try:
+            result=self._solve_uncached(source,tcp,point,rotation,flexible,limit_deg,posture_target,global_goal,retreat_freedom,free_heading)
+        except IKFailure as exc:cache[key]=str(exc);raise
+        cache[key]=dict(result);return result
+
+    def _solve_uncached(self, source, tcp, point, rotation, flexible=False, limit_deg=None,
               posture_target=None, global_goal=False, retreat_freedom=0., free_heading=False):
         """所有关节逆解交给原厂KDL；独立FK复核，不凭求解返回值判定到点。"""
         phase={0:'预抓取',1:'进入抓点',2:'抬离',3:'退离',4:'持物收回'}.get(getattr(self,'_candidate_stage',0),'逆解')
@@ -271,7 +316,14 @@ class VendorGraspPlanner(Planner):
                 lower=lo.tolist(),upper=hi.tolist())
             values = np.asarray(result, float)
         except (ValueError,OSError) as exc:
-            raise IKFailure('原厂IK未收敛：'+str(exc)) from exc
+            if not isinstance(exc,ValueError) or not any(t in str(exc) for t in ('LMA解超出','NR/LMA均未找到')):
+                raise IKFailure('原厂IK未收敛：'+str(exc)) from exc
+            from .bounded_grasp_ik import recover_seed
+            improved=recover_seed(self,source,tcp,point,rotation,seed,lo,hi)
+            try:
+                values=np.asarray(self.solver.request('ik',pose=pose.tolist(),seed=improved.tolist(),lower=lo.tolist(),upper=hi.tolist()),float)
+            except (ValueError,OSError) as retry:raise IKFailure('有界初值的原厂IK复核失败：'+str(retry)) from retry
+            self.bounded_seed_recoveries=getattr(self,'bounded_seed_recoveries',0)+1
         if values.shape != seed.shape or not np.isfinite(values).all():
             raise IKFailure('原厂IK未返回完整腰臂关节')
         if np.any(values < lo-1e-6) or np.any(values > hi+1e-6):

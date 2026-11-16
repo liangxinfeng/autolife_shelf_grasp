@@ -6,18 +6,17 @@ from control_center_joint_control.joint_definitions import GROUPS
 
 
 def ready_after_place(cfg,q):
-    """Only measured full preparation pose can mint another reset receipt."""
+    """身体姿态仍须到位；夹爪按指令时序完成，开口残差不阻断复位。"""
     try:
         if cfg.get('workspace_reset_joints'):
-            return all(abs(q[n]-v)<=(8. if 'Gripper' in n else 1.) for n,v in cfg['workspace_reset_joints'].items())
+            return all(math.isfinite(q[n]) and math.isfinite(v) and ('Gripper' in n or abs(q[n]-v)<=1.) for n,v in cfg['workspace_reset_joints'].items())
         for group in ('left_arm','right_arm','neck'):
             joints=GROUPS[group]['joints'];values=cfg['initial_pose_deg'][group]
             if len(joints)!=len(values):return False
             for (name,*_),value in zip(joints,values):
                 if not math.isfinite(q[name]) or not math.isfinite(value) or abs(q[name]-value)>1.:return False
         from .core import open_tolerance
-        return all(math.isfinite(q[n]) and abs(q[n]-cfg['gripper_open_deg'])<=open_tolerance(cfg)
-                   for n in ('Joint_Left_Gripper','Joint_Right_Gripper'))
+        return all(math.isfinite(q[n]) for n in ('Joint_Left_Gripper','Joint_Right_Gripper'))
     except (KeyError,TypeError,ValueError):return False
 
 

@@ -59,10 +59,10 @@ def gripper_geometry(planner):
     return result
 
 
-def contact_tcp(planner,physical_tcp):
+def contact_tcp(planner,physical_tcp,fraction=None):
     """低物体使用指腹前段，原来的手指转轴原点不能充当指腹接触点。"""
     g=gripper_geometry(planner)
-    fraction=float(planner.cfg.get('low_object_finger_contact_fraction',.80))
+    fraction=float(planner.cfg.get('low_object_finger_contact_fraction',.80) if fraction is None else fraction)
     if not .5<=fraction<=.9:raise ValueError('低物体指腹位置需在指长的50%～90%之间')
     forward=Rotation.from_quat(planner.cfg['T_wrist_tool_quat_xyzw']).as_matrix()[:,0]
     depth=g['finger_start']+fraction*(g['finger_tip']-g['finger_start'])

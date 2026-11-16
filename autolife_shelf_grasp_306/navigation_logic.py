@@ -10,6 +10,31 @@ FAILED={'failed','rejected','canceled','cancelled','paused','undock_failed'}
 IDLE=SUCCESS|FAILED|{'idle','waiting','sequence_succeeded'}
 
 
+class StationaryHistory:
+    """连续记录真实停稳时间；到点消息到来时不再重新等待半秒。"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.start=None;self.last=None
+
+    def add(self,stamp,linear,angular):
+        if not all(math.isfinite(v) for v in (stamp,linear,angular)):
+            self.reset();return
+        if self.last is not None and stamp==self.last:return
+        if self.last is not None and (stamp<self.last or stamp-self.last>=.4):
+            self.reset()
+        self.last=stamp
+        if abs(linear)>=.015 or abs(angular)>=.025:
+            self.start=None
+        elif self.start is None:self.start=stamp
+
+    def ready(self,now):
+        return bool(self.start is not None and self.last is not None and
+                    math.isfinite(now) and 0<=now-self.last<.4 and
+                    self.last-self.start>=.5)
+
+
 def navigation_summary(data,inflight=False):
     if data.get('map_fault'):return '地图切换未完成，请重新加载地图'
     if data.get('startup_error'):return data['startup_error']
@@ -58,7 +83,7 @@ def write_active(path,waypoints):
     atomic_json(ACTIVE,dict(version=1,active_map=str(path),waypoints_file=str(waypoints)))
 
 
-def waypoint_poses(names=None):
+def _fixed_waypoint_poses(names=None):
     try:
         data=yaml.safe_load(ACTIVE.read_text());p=Path(data['waypoints_file'])
         p=p if p.is_absolute() else NAV/p
@@ -76,6 +101,32 @@ def waypoint_poses(names=None):
             if all(math.isfinite(v) for v in values):result[name]=values
         return result
     except (ValueError,KeyError,TypeError,OSError):return {}
+
+
+def parking_chains(map_path=None):
+    """读取导航包统一停靠链库；按当前地图隔离，不复制成固定航点。"""
+    try:
+        key=str(Path(map_path or active_map()).resolve())
+        payload=json.loads((Path.home()/'.ros/control_center_navigation/parking_chains.json').read_text(encoding='utf-8'))
+        result={}
+        for name,chain in payload.get(key,{}).items():
+            points=chain.get('points',[])
+            if isinstance(name,str) and len(points)>=2 and all(len(p)==2 and all(math.isfinite(float(v)) for v in p) for p in points):
+                result[name]=chain
+        return result
+    except (OSError,ValueError,TypeError,KeyError):return {}
+
+
+def waypoint_poses(names=None):
+    result=_fixed_waypoint_poses(names)
+    for name,chain in parking_chains().items():
+        if name in result or (names is not None and name not in names):continue
+        # 首点仅用作列表/地图标签锚点，实际目标由导航后台沿链选择。
+        a,b=chain['points'][:2]
+        facing=chain.get('facing','left')
+        yaw=float(chain.get('yaw',0.)) if facing=='fixed' else math.atan2(b[1]-a[1],b[0]-a[0])+(math.pi/2 if facing=='left' else -math.pi/2)
+        result[name]=[float(a[0]),float(a[1]),yaw]
+    return result
 
 
 def waypoint_names(snapshot):

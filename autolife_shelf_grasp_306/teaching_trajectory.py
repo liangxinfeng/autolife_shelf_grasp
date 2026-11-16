@@ -21,7 +21,11 @@ def evaluate(segment,progress,order=0):
     return dict(zip(ALL_JOINTS,map(float,value)))
 
 
-def build(record,entry):
+def build(record,entry,limit_scale=1.):
+    # 整体速度大于100%时同步调整软件轨迹预算，避免后续重新压回100%。
+    # 有界1～1.5倍；不修改原厂增益、驱动参数、关节位置及反馈超前保护。
+    limit_scale=float(limit_scale)
+    if not np.isfinite(limit_scale) or not 1.<=limit_scale<=1.5:raise ValueError('轨迹速度预算无效')
     record=deepcopy(record);points=[checked_joints(entry)]+[f['joints_deg'] for f in record['keyframes']]
     zero={n:0. for n in ALL_JOINTS}
     def make():
@@ -44,7 +48,7 @@ def build(record,entry):
             # 五次曲线导数为低阶多项式，求真实峰值而不是粗Lipschitz上界。
             # 原上界会把一个合法夹爪动作夸大为1.75倍，再拖慢整段双臂动作。
             bound=np.array([peak_absolute(c[:,j]) for j in range(len(ALL_JOINTS))])/t**order
-            for j,n in enumerate(ALL_JOINTS):factor=max(factor,(bound[j]/limits(n)[order-1])**(1/order))
+            for j,n in enumerate(ALL_JOINTS):factor=max(factor,(bound[j]/(limits(n)[order-1]*limit_scale))**(1/order))
     if factor>1.000001:
         for f in record['keyframes']:
             f['transition_sec']*=float(factor)*1.001
@@ -69,7 +73,8 @@ def plan(record,entry,directory):
         return plan_track(record,entry,directory)
     from .teaching_motion import stage_action
     staged,phases=stage_action(record,entry)
-    staged,segments=build(staged,entry)
+    requested=float(record['speed_percent'])/100.
+    staged,segments=build(staged,entry,limit_scale=max(1.,min(1.5,requested)))
     # 身体段保持上一阶段夹持意图；不要把持物开口当作新的松爪目标。
     for segment,phase in zip(segments,phases):
         segment['hold_grippers']=phase[1]=='关节到位并停稳'

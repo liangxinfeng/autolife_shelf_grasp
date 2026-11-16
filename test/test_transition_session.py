@@ -125,7 +125,7 @@ def test_actual_executor_preparation_branch_one_enable(monkeypatch,native,placin
         def enter(self,spin):calls.append(('sync',self.kw))
     monkeypatch.setattr('autolife_shelf_grasp_306.pose_manual_session.ManualHoldSession',Session)
     def unlock():calls.append(('unlock',));return NS(success=True)
-    env=dict(__package__='autolife_shelf_grasp_306',native_motion=native,placing=placing,observing=False,
+    env=dict(prepared=None,__package__='autolife_shelf_grasp_306',native_motion=native,placing=placing,observing=False,
         vendor_grasp=native and not placing,node=NS(unlock=unlock,_hardware_ready=True),
         PositionSyncSession=Session,mark=lambda n:calls.append(('mark',n)),spin=lambda:None,
         check_start_pose=lambda s:calls.append(('check',s)),refreshed={'validated':True},
@@ -149,7 +149,7 @@ def test_navigation_prepare_height_then_action_share_one_session(monkeypatch,tmp
     app=Q.QApplication.instance() or Q.QApplication([]);sessions=[];starts=[];lower=[];receipts=[]
     class Session:
         def __init__(self,b,**kw):self.active=True;self.verified=False;self.lower_enabled=set();sessions.append(self)
-        def begin(self):pass
+        def begin(self,**kw):self.anchor={}
         def tick(self):pass
         def poll(self):self.verified=True;return True
         def close(self):return True

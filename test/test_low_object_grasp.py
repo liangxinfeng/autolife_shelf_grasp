@@ -93,3 +93,9 @@ def test_grasp_scope_cannot_leak_to_placement_or_reset():
     p=planner();p._low_object_grasp_active=False
     obj=support(dict(height_m=.03),np.array([.4,0,.015]),[0,0,1])
     check_clearance(p,dict(p=[.4,0,-1]),np.zeros(3),obj)
+
+
+def test_unreachable_orientation_is_not_reported_as_table_collision():
+    p=planner();p.grasp_attitude_feasible=lambda *a:False
+    with pytest.raises(ValueError,match='抓取逆解'):
+        orientation(p,{},np.zeros(3),np.array([.4,0,.015]),dict(height_m=.03),0,adjust_height=True)

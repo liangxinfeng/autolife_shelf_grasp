@@ -18,7 +18,11 @@ def horizontal_basis(up,yaw=0.):
     return forward,unit(np.cross(up,forward)),up
 
 
-def object_points(frame,mask,T,cfg):
+def object_points(frame,mask,T,cfg,dense=True):
+    """抓取尺寸估计要求稠密深度；纠偏可取稀疏真深度，再由配准验证。
+
+    dense=False不填补无效像素、不估算假深度，也不代表物体定位已通过。
+    """
     from autolife_handeye_calibration_306.depth_target import aligned_depth
     if frame.get('depth') is None:raise ValueError('等待同帧深度')
     aligned_depth(frame['image'],frame['depth'],frame['frame_id'],frame['depth_id'],frame['intrinsics'],frame['depth_intrinsics'])
@@ -35,7 +39,9 @@ def object_points(frame,mask,T,cfg):
     rows,cols=np.where(safe);rows,cols=rows[::2],cols[::2]
     z=frame['depth'][rows,cols].astype(float)*cfg['depth_scale_m']
     lo,hi=cfg['depth_range_m'];valid=np.isfinite(z)&(z>=lo)&(z<=hi)
-    if valid.sum()<80 or valid.mean()<.50:raise DepthQualityError('瓶身有效深度不足，请避开反光')
+    if valid.sum()<80:
+        raise DepthQualityError('瓶身有效深度不足，请避开反光' if dense else '参照物有效深度点不足80个，暂不能确定三维位置')
+    if dense and valid.mean()<.50:raise DepthQualityError('瓶身有效深度不足，请避开反光')
     rows,cols,z=rows[valid],cols[valid],z[valid]
     # Unlike the old global +/-65mm optical-depth cut, preserve vertical bottle
     # extent at oblique viewing angles. Radial rejection happens in 3D below.
@@ -182,7 +188,7 @@ def planning_product(product,geometry):
     result=dict(product)
     if product.get('geometry','cylinder')=='bag_edge':return result
     observed=float(geometry['observed_height_mm'])/1000.
-    if not np.isfinite(observed) or observed<.025:raise ValueError('可见高度无效')
+    if not np.isfinite(observed) or observed<=0:raise ValueError('物体高度数据无效')
     result['reference_height_m']=product['height_m']
     result['height_m']=observed
     # A clipped top/bottom may put the grasp point away from the whole object's

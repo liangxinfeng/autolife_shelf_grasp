@@ -1,4 +1,4 @@
-"""已确认物体身份后，用完整轮廓与分布式深度对应估计平移。
+"""已确认物体身份后，用可见轮廓与分布式深度对应估计平移。
 
 不把补录时的摆放位置当作初始位置，也不拿部分点云的质心差当运动。
 本方法只服务“只纠正位置”：轮廓相似且视角接近时，在归一化轮廓内
@@ -33,37 +33,34 @@ def _edge_flags(outline):
 
 
 def _partial_outline(reference,current,oa,ob,cfg):
-    """轻微裁边时用完整参考的投影尺寸恢复采样坐标，不给缺失区域伪造深度。
+    """裁边后从参考尺寸与连贯表面深度恢复投影尺寸，只采样真实像素。
 
-    原归一化包围框会把裁短后的物体拉伸，产生半个缺口大小的位置偏差。
-    使用深度与相机内参推算尺寸，只在仍可见的另一端锚定；采样仍仅取真实像素。
+    不能把裁短的包围框拉伸成完整物体，也不能用反光区域的深度中位数
+    决定整物体大小。用最密集的连贯表面深度计算投影比例，在仍可见的
+    对边锚定缺失端。最终由分布式三维对应判断，不设缺失比例上限。
     """
     left,right=_edge_flags(ob)
     if not (left.any() or right.any()):return ob,False
     if any(x.any() for x in _edge_flags(oa)):
-        raise ValueError('参考物体已超出画面，缺少完整尺寸；请补录一个完整参考视角')
-    if np.any(left&right):raise ValueError('物体超出画面较多，请稍微后退让物体完整些')
-    def depth_of(arr,mask):
-        d=np.asarray(arr['depth'],float)*float(cfg['depth_scale_m'])
-        low,high=cfg['depth_range_m'];v=d[mask&np.isfinite(d)&(d>=low)&(d<=high)]
-        if len(v)<100:raise ValueError('物体轻微裁边，但有效深度不足，请调整视角')
-        return float(np.median(v))
-    za=depth_of(reference,oa[0]);zb=depth_of(current,ob[0])
-    scale=np.diag(current['K'])[:2]/np.diag(reference['K'])[:2]*za/zb
-    expected=(oa[2]-oa[1])*scale
+        raise ValueError('参考物体缺少完整边界；需要纹理对应来确定位置')
+    if np.any(left&right):
+        raise ValueError('物体同一方向两端均不可见，需通过表面纹理确定该方向位置')
+    extent=(oa[2]-oa[1]).astype(float)
     lo=ob[1].astype(float).copy();hi=ob[2].astype(float).copy()
-    measured=hi-lo
-    # 最多容忍各方向完整尺寸的8%，且最多12像素；不是取消所有裁边判断。
+    focal=np.diag(current['K'])[:2]/np.diag(reference['K'])[:2]
+    def surface_depth(arr,mask):
+        d=np.asarray(arr['depth'],float)*float(cfg['depth_scale_m'])
+        low,high=cfg['depth_range_m'];v=np.sort(d[mask&np.isfinite(d)&(d>=low)&(d<=high)])
+        if len(v)<100:raise ValueError('当前可见部分有效深度不足，无法确定投影尺寸')
+        # 反光可能产生大量远处假深度。取最密集的连续表面深度簇，
+        # 只用于投影尺寸；最终平移仍由真实分散对应点估计。
+        ends=np.searchsorted(v,v+.04,side='right');i=int(np.argmax(ends-np.arange(len(v))))
+        return float(np.median(v[i:ends[i]]))
+    scale=surface_depth(reference,oa[0])/surface_depth(current,ob[0])
+    expected=extent*focal*scale
     for axis in (0,1):
-        gap=expected[axis]-measured[axis]
-        if left[axis] or right[axis]:
-            if gap < -max(2.,expected[axis]*.04) or gap>min(12.,expected[axis]*.08)+1e-6:
-                raise ValueError('物体超出画面较多或尺寸不一致，请稍微调整取景')
-            if gap>0:
-                if left[axis]:lo[axis]-=gap
-                else:hi[axis]+=gap
-        elif abs(gap)>max(2.,expected[axis]*.08):
-            raise ValueError('裁边物体与参考轮廓尺寸不一致，请调整观察方向')
+        if left[axis]:lo[axis]=hi[axis]-expected[axis]
+        elif right[axis]:hi[axis]=lo[axis]+expected[axis]
     return (ob[0],lo,hi,ob[3]),True
 
 
@@ -94,9 +91,13 @@ def _samples(arrays,T,cfg,grid,outline):
     depth=np.asarray(arrays['depth'],float)*float(cfg['depth_scale_m'])
     z=depth[y,x];low,high=cfg['depth_range_m']
     valid=inside&mask[y,x]&np.isfinite(z)&(z>=low)&(z<=high)
+    neighbors=np.zeros(len(z),np.uint8)
     for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
         near=depth[y+dy,x+dx]
-        valid&=np.isfinite(near)&(np.abs(near-z)<.015)
+        neighbors+=mask[y+dy,x+dx]&np.isfinite(near)&(near>=low)&(near<=high)&(np.abs(near-z)<.015)
+    # 反光空洞不是相反证据；保留有两个邻点支持的真实深度，而不是要求四邻域全满。
+    # 后面仍需分散对应点的一致平移、歧义排除及完整表面复核，不插值填深度。
+    valid&=neighbors>=2
     rays=cv2.undistortPoints(pixels[:,None,:].astype(float),arrays['K'],arrays['D']).reshape(-1,2)
     points=np.column_stack((rays*z[:,None],z))@T[:3,:3].T+T[:3,3]
     return points,pixels,valid
@@ -113,7 +114,7 @@ def _estimate(reference,reference_camera,current,current_camera,cfg,oriented=Fal
     if not partial and any(x.any() for x in _edge_flags(oa)):
         raise ValueError('参考物体已超出画面，请补录完整参考视角')
     if oriented:
-        if partial:raise ValueError('轻微裁边使用原始投影方向，不从残缺轮廓推测旋转')
+        if partial:raise ValueError('裁边使用原始投影方向，不从残缺轮廓推测旋转')
         oa=_oriented_outline(reference);ob=_oriented_outline(current)
     sa,sb=oa[3],ob[3];iou=float(np.sum(sa&sb)/max(1,np.sum(sa|sb)))
     aspect=(oa[2]-oa[1])[0]/(oa[2]-oa[1])[1]/((ob[2]-ob[1])[0]/(ob[2]-ob[1])[1])
@@ -131,21 +132,43 @@ def _estimate(reference,reference_camera,current,current_camera,cfg,oriented=Fal
         if best is None or good.sum()>best.sum():best=good
     shift=np.median(diff[best],axis=0)
     good=np.linalg.norm(diff-shift,axis=1)<.012
-    if good.sum()<40 or good.mean()<.60:
+    if good.sum()<40:
         raise ValueError('物体已认出，但深度对应不一致；请让物体完整可见后预览')
+    # 遮挡物、反光深度不属于定位参照，不能强求它们也服从同一平移。
+    # 少于60%时要求存在唯一主导簇，后面仍检查空间分布、残差和表面。
+    occluded=bool(good.mean()<.60);runner=0
+    if occluded:
+        for candidate in diff[::max(1,len(diff)//120)]:
+            if np.linalg.norm(candidate-shift)>.024:
+                runner=max(runner,int((np.linalg.norm(diff-candidate,axis=1)<.012).sum()))
+        if runner>=.65*int(good.sum()):
+            raise ValueError('可见物体深度存在多个位置解释，暂不能确定纠偏方向')
     shift=np.median(diff[good],axis=0)
     rms=float(np.sqrt(np.mean(np.sum((diff[good]-shift)**2,axis=1))))
     spread=np.ptp(uv[good],axis=0)
-    # 上下左右都必须有支持，避免仅匹配到标签或背景的一小片。
-    quadrants={(int(x>=.5),int(y>=.5)) for x,y in uv[good]}
-    if rms>.008 or min(spread)<.55 or len(quadrants)<4:
-        raise ValueError('物体已认出，但深度只覆盖局部；请露出物体上下两端再预览')
+    # 裁边时检查真实可见区域的覆盖，而不是要求画面外也有深度。
+    # 同时保留三维分布，不能仅凭一条线或极小标签推断整体平移。
+    support=ap[valid][good]
+    physical_span=np.linalg.svd(support-support.mean(0),compute_uv=False)[1]/np.sqrt(len(support))
+    if partial:
+        visible_span=np.ptp(uv,axis=0)
+        coverage=spread/np.maximum(visible_span,1e-9)
+        distributed=min(coverage)>=.65 and physical_span>=.004
+    else:
+        quadrants={(int(x>=.5),int(y>=.5)) for x,y in uv[good]}
+        distributed=min(spread)>=.55 and len(quadrants)>=(3 if occluded else 4)
+        # 完整外轮廓可见但深度缺失时，不能强求两轴都覆盖固定百分比。
+        # 允许有真实二维面积、跨至少三象限的窄带支持平移；不由一条线或小标签外推。
+        distributed=distributed or (max(spread)>=.55 and np.prod(spread)>=.25 and physical_span>=.008 and len(quadrants)>=3)
+    if rms>.008 or not distributed:
+        raise ValueError('当前可见部分的深度对应过于集中，尚不能确定物体位置')
     delta=np.eye(4);delta[:3,3]=shift
-    return delta,dict(method='shape_position',method_label='方向对齐＋深度位置纠偏' if oriented else '整体轮廓＋深度位置纠偏',
+    return delta,dict(method='shape_position',method_label='可见轮廓＋深度位置纠偏' if partial else ('方向对齐＋深度位置纠偏' if oriented else '整体轮廓＋深度位置纠偏'),
         silhouette_alignment='principal_axes' if oriented else 'image_axes',
         orientation_observed=False,angle_resolution_deg=180.,partial_outline=partial,
+        occlusion_consensus=occluded,alternative_inliers=runner,
         position_resolution_mm=max(2.,2*rms*1000),rms_mm=rms*1000,
-        inliers=int(good.sum()),matches=len(diff),silhouette_overlap=iou,silhouette_aspect_ratio=float(aspect),
+        physical_support_mm=float(physical_span*1000),inliers=int(good.sum()),matches=len(diff),silhouette_overlap=iou,silhouette_aspect_ratio=float(aspect),
         pixels=pixels[good].tolist())
 
 

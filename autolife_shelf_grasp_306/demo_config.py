@@ -39,7 +39,7 @@ def require_placeable(product):
     if directional:
         from .object_extent import bbox
         bbox(product)
-    if not all(math.isfinite(v) for v in (w,h,d)) or not (.015<=w<=(.35 if directional else .09) and .025<=h<=.4):
+    if not all(math.isfinite(v) for v in (w,h,d)) or not (.015<=w<=(.35 if directional else .09) and (0<h<=.4 if product.get('geometry')=='solid' else .025<=h<=.4)):
         raise ValueError('物品几何尺寸不足以安全规划放置')
     if shape not in ('solid','cylinder') or (shape=='solid' and not .005<=d<=(.35 if directional else .15)):
         raise ValueError('当前自动放置支持瓶罐及尺寸可靠的硬质物品，暂不支持柔性袋体')

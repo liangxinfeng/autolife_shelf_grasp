@@ -73,14 +73,15 @@ def flow(w):
     w.workflow.phase='scan';w.workflow.semantic_target=True
 
 
-def test_candidates_retry_then_manual_confirm(window,qt):
+def test_task_candidates_retry_then_execute_without_second_confirmation(window,qt):
     w=window;flow(w);scene(w)
     assert w.process.commands[-1]['id']==1
     w.receive_event(dict(event='error',request_id=w.request,text='路径碰撞',candidate_unavailable=True))
     assert w.process.commands[-1]['id']==2
     assert w.workflow.active
-    w.receive_event(plan(w));qt.processEvents()
-    assert w.workflow.phase=='confirm' and w.execute.isEnabled()
+    moves=[];w.launch_motion=lambda filename,**kw:moves.append(filename)
+    event=plan(w);w.receive_event(event);qt.processEvents()
+    assert w.workflow.phase=='grasp' and moves==[event['filename']]
     assert not w.auto_grasp.isChecked()
 
 

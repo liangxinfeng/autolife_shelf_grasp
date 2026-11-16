@@ -83,3 +83,21 @@ def test_yaw_for_negative_up_and_tilted_torso():
     p=product();p['bbox_axes_torso']=np.column_stack([side,-forward,up]).tolist()
     cfg=dict(approach_yaw_deg=0,up_torso=up,gripper_max_width_m=.095)
     assert any(abs(y-37.)<1e-7 for y in directional_yaws(p,cfg))
+
+
+@pytest.mark.parametrize('width',[.081,.086,.09])
+def test_actual_jaw_capacity_not_reduced_by_preopening_margin(width):
+    p=dict(bbox_axes_torso=[[0,1,0],[1,0,0],[0,0,1]],bbox_extents_m=[width,.12,.04])
+    cfg=dict(approach_yaw_deg=0,up_torso=[0,0,1],gripper_max_width_m=.09)
+    assert list(directional_yaws(p,cfg))[0]==0
+    assert projected_width(p,[0,1,0])==pytest.approx(width)
+
+
+def test_local_opening_has_geometry_reserve_not_duplicate_execution_margin():
+    from autolife_shelf_grasp_306.local_contact import candidates,required_opening
+    p=dict(bbox_axes_torso=np.eye(3).tolist(),bbox_extents_m=[.12,.088,.04],
+        measured_footprint_torso=[[-.06,-.042,0],[-.06,.042,0],[.06,.042,0],[.06,-.042,0]])
+    cfg=dict(approach_yaw_deg=0,up_torso=[0,0,1],gripper_max_width_m=.09)
+    assert required_opening(p,np.zeros(3),np.eye(3),preopening_margin=0.)==pytest.approx(.088)
+    # 物体侧偏后对称两指的实际净开口仍可能不足，不能靠减余量掩盖。
+    assert required_opening(p,np.array([0,.01,0]),np.eye(3),preopening_margin=0.)>.09

@@ -133,14 +133,18 @@ def register_views(views,current):
     return best
 
 
-def validate_surface(reference_cloud,current_cloud,delta):
+def validate_surface(reference_cloud,current_cloud,delta,visible_only=False):
     """整物体3D表面佐证纹理匹配；只检查可见重叠，不以易受遮挡影响的质心纠偏。"""
     from scipy.spatial import cKDTree
     a=np.asarray(reference_cloud,float).reshape(-1,3);b=np.asarray(current_cloud,float).reshape(-1,3)
     a=a[np.isfinite(a).all(1)];b=b[np.isfinite(b).all(1)]
     if len(a)<30 or len(b)<30:raise ValueError('整物体有效深度不足，请露出更多物体表面')
-    a=a[::max(1,len(a)//3000)];b=b[::max(1,len(b)//3000)]
-    moved=a@delta[:3,:3].T+delta[:3,3];distance=cKDTree(b).query(moved)[0]
+    # 不按行号抽稀：窄边缘和反光条纹会与固定步长混叠，导致同一表面误判。
+    # 相机已限制在分割区域；KD树直接验证所有有限实测点。
+    moved=a@delta[:3,:3].T+delta[:3,3]
+    # 定位已有纹理/分布式深度对应约束。反光空洞不是反证：只验证本次
+    # 真正观测到的表面是否落在已保存表面上，不要求当前重现旧帧的全部点。
+    distance=cKDTree(moved).query(b)[0] if visible_only else cKDTree(b).query(moved)[0]
     overlap=float(np.mean(distance<.015))
-    if overlap<.30:raise ValueError('纹理与整物体深度不一致，请重新取景确认物体')
+    if overlap<(.55 if visible_only else .30):raise ValueError('定位与当前可见物体深度不一致，请重新取景确认物体')
     return overlap

@@ -135,7 +135,7 @@ def test_first_direction_auto_captures_and_subsequent_direction_accumulates():
 def test_single_pose_optional_object_correction(use_object):
     from autolife_shelf_grasp_306.pose_workspace import PoseWorkspace
     q=pose();records=[]
-    w=NS(capture=lambda:q,pose_list=NS(currentText=lambda:'p'),manual_speed=NS(value=lambda:70),
+    w=NS(capture=lambda:q,pose_list=NS(currentText=lambda:'p'),pose_speed=lambda:70,
          store=NS(read=lambda:{'p':q},binding=lambda _:dict(reference_id='object')),
          pose_use_object=NS(isChecked=lambda:use_object),execute_record=records.append)
     PoseWorkspace.execute_pose(w)

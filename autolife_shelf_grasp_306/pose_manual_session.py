@@ -50,7 +50,14 @@ class ManualHoldSession(PositionSyncSession):
 
     def poll(self):
         n=self.node;now=time.monotonic()
-        if not n._hardware_enabled or not n._is_feedback_fresh():raise ValueError('手动保持准备期间反馈或控制权失效')
+        if not n._hardware_enabled:raise ValueError('手动保持准备期间控制权失效')
+        if not n._is_feedback_fresh():
+            # 原厂使能服务尚未返回时正在切模式，没有开始播放轨迹。
+            # 在原12秒服务期限内继续接收回包，不把切换缺帧当成运动故障。
+            if self.future is not None and not self.future.done() and not self.active:
+                if now-self.started>12.:raise ValueError('原厂保持使能超时，已停止此次调节')
+                self.stable=None;return False
+            raise ValueError('手动保持准备期间反馈失效')
         n._last_operator_activity=now
         if self.future is None:
             if not self.client.service_is_ready() or self.vendor_state is None or now-self.vendor_stamp>1.:

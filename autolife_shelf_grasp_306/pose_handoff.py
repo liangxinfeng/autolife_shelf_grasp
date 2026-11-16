@@ -94,7 +94,7 @@ class LoadedJawSettling:
                 max(v for _,v in self.samples)-min(v for _,v in self.samples)<=.5)
 
 
-def await_loaded_pose(snapshot,poll,feedback_stamp,source,stage,kind,clock,on_report,timeout=1.5,arm='left'):
+def await_loaded_pose(snapshot,poll,feedback_stamp,source,stage,kind,clock,on_report,timeout=1.5,arm='left',require_jaw_stable=True):
     """先排空新反馈再确认持物；切换瞬间的旧帧不等于持续通信故障。
 
     参考姿态、0.3秒新鲜度及稳定窗口均不放宽。等待期间不输出运动，
@@ -124,12 +124,17 @@ def await_loaded_pose(snapshot,poll,feedback_stamp,source,stage,kind,clock,on_re
                 detail='缺失或无效' if age is None else f'{age:.3f}秒'
                 raise ValueError(stage+'：等待新鲜持物反馈超时，反馈年龄'+detail+'；保持停止，未开始放置')
             continue
-        report=start_pose_diagnostic(current,source,stage,kind,arm=arm)
+        # 开合指令已按时序结束时，交接只核对身体与通信，不再次等待夹爪位置。
+        reference=source if require_jaw_stable else {n:v for n,v in source.items() if 'Gripper' not in n}
+        if not require_jaw_stable:
+            for name in source:
+                if 'Gripper' in name and not math.isfinite(float(current[name])):raise ValueError('夹爪反馈无效：'+name)
+        report=start_pose_diagnostic(current,reference,stage,kind,arm=arm)
         report['feedback_age_sec']=age
         report['feedback_stamp_monotonic']=stamp
         if window.last_stamp is not None and stamp-window.last_stamp>.3:
             window=LoadedJawSettling()
-        stable=window.add(stamp,now,float(current[gripper_name(arm)]))
+        stable=window.add(stamp,now,float(current[gripper_name(arm)])) if require_jaw_stable else True
         # 报告写盘不应在每个5ms轮询内重复进行，更不能先写盘再判断帧时间。
         if stable or not report['ok'] or now-last_report>=.1:
             on_report(report);last_report=now

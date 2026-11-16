@@ -112,13 +112,16 @@ def test_shared_task_entry_corrects_before_execution_and_keeps_gripper_flag():
     from autolife_shelf_grasp_306.teaching_studio import TeachingStudio
     calls=[];pending=[]
     fake=SimpleNamespace(_acquire=lambda:calls.append('lease'),ensure=lambda:None,_unlock=lambda:None,
-        _completed=lambda *v:calls.append(v),engine=SimpleNamespace(bridge=None,moving=lambda:False,execute=lambda *a,**kw:calls.append((a,kw))),
+        _completed=lambda *v:calls.append(v),engine=SimpleNamespace(bridge=None,stop=lambda:None,moving=lambda:False,execute=lambda *a,**kw:calls.append((a,kw))),
         visual=SimpleNamespace(request=lambda action,callback,**kw:pending.append(callback)))
     f=frame('a',pose());f['visual_binding']=bound();record=compile_action(compose('a',[f],100))
+    fake._launch_parallel_action=lambda:TeachingStudio._launch_parallel_action(fake)
     TeachingStudio.execute(fake,'task:2',record,preserve_grippers_at_entry=True)
     assert calls==['lease'] and len(pending)==1
     corrected=clone_without_bindings(record)
     pending[0](dict(result=dict(record=corrected,source=pose(),base_anchor=[0,0,0])))
+    assert calls==['lease']  # 计算完成也不能抢在使能准备之前运动。
+    fake.parallel_action['body_ready']=True;fake._launch_parallel_action()
     assert calls[-1][0]==('task:2',corrected) and calls[-1][1]['preserve_grippers_at_entry'] is True
     assert calls[-1][1]['visual_source']==pose()
 
@@ -127,7 +130,7 @@ def test_shared_task_failure_does_not_execute_uncorrected_record():
     from autolife_shelf_grasp_306.teaching_studio import TeachingStudio
     calls=[]
     fake=SimpleNamespace(_acquire=lambda:None,ensure=lambda:None,_unlock=lambda:None,
-        _completed=lambda *v:calls.append(v),engine=SimpleNamespace(bridge=None,moving=lambda:False,execute=lambda *a,**kw:pytest.fail('unexpected motion')),
+        _completed=lambda *v:calls.append(v),engine=SimpleNamespace(bridge=None,stop=lambda:None,moving=lambda:False,execute=lambda *a,**kw:pytest.fail('unexpected motion')),
         visual=SimpleNamespace(request=lambda action,callback,**kw:callback(dict(error='参照被遮挡'))))
     TeachingStudio.execute(fake,'task:2',dict(visual_bindings={'0':bound()}))
     assert calls==[('task:2',False,'物体纠偏未执行：参照被遮挡')]

@@ -35,13 +35,19 @@ def bag_edge_target(points,pixels,point,up,product,camera):
 def estimate_object(frame,mask,T,up,product,cfg,grasp_pixel=None):
     bag=product.get('geometry')=='bag_edge'
     w,h,d=(float(product[k]) for k in ('diameter_m','height_m','depth_m'))
-    if not (.015<=w<=(.35 if bag else .09) and .04<=h<=.4 and
+    if not (.015<=w<=(.35 if bag else .09) and 0<h<=.4 and
             (.001 if bag else .005)<=d<=(.02 if bag else .15)):
         raise ValueError('物品尺寸配置无效')
     points,pixels,_=object_points(frame,mask,T,cfg)
     if product.get('geometry')=='bag_edge':
         if grasp_pixel is None:raise ValueError('请先在图像中选择袋口实体边缘夹取点')
         return bag_edge_target(points,pixels,grasp_pixel,up,product,T[:3,3])
+    if h<float(cfg.get('low_object_height_m',.10)) and not image_cropped(mask):
+        # 已录入的矮物体与直接识别共用几何链，不能被旧25mm门槛二次拦截。
+        from .unregistered import solid_observation
+        center,stats,_,_=solid_observation(frame,mask,T,up,product,cfg,points,pixels)
+        stats.pop('temporary_product',None)
+        return center,stats
     center,stats=solid_center(points,up,product,T[:3,3])
     stats['image_cropped']=image_cropped(mask)
     return center,stats

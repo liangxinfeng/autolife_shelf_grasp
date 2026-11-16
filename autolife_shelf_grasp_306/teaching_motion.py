@@ -33,6 +33,9 @@ def normalize_draft(draft):
             frames[-1]['visual_binding']=binding(f['visual_binding'])
             frames[-1]['visual_enabled']=f.get('visual_enabled',True) is not False
     result=dict(version=1,name=str(draft.get('name','')).strip()[:32],frames=frames)
+    if 'overall_speed_percent' in draft:
+        from .action_speed import percent
+        result['overall_speed_percent']=percent(draft['overall_speed_percent'])
     if draft.get('kind')=='trajectory':
         from .teaching_track import check_hash
         indices=[f.get('sample_index',-1) for f in frames]
@@ -91,6 +94,9 @@ def compile_action(draft,entry=None):
                                   speeds=[f['speed_percent'] for f in draft['frames']],minimums=[f['minimum_sec'] for f in draft['frames']],timing=draft['timing'])
     bindings={str(i):f['visual_binding'] for i,f in enumerate(draft['frames']) if f.get('visual_binding') and f.get('visual_enabled',True)}
     if bindings:record['visual_bindings']=bindings
+    if 'overall_speed_percent' in draft:
+        from .action_speed import apply
+        return apply(record,draft['overall_speed_percent'])
     return full_record(record)
 
 
@@ -116,11 +122,13 @@ def stage_action(record,entry):
             body=dict(target)
             body.update({n:previous[n] for n in GRIPPER_JOINTS})
             jaw_change=any(abs(target[n]-previous[n])>.001 for n in GRIPPER_JOINTS)
+            # 先根据真实起点生成标准时长，再统一缩放；第一段也必须实际受调速控制。
+            scale=record['speed_percent']/100.
             rows.append(dict(joints_deg=body,transition_sec=duration(previous,body,100,
-                f['transition_sec']/(record['speed_percent']/100.)),hold_sec=.25 if jaw_change else f['hold_sec'],easing='smooth'))
+                f['transition_sec'])/scale,hold_sec=.25 if jaw_change else f['hold_sec'],easing='smooth'))
             phases.append((i,'关节到位并停稳',repeat))
             if jaw_change:
-                rows.append(dict(joints_deg=target,transition_sec=duration(body,target,100,.3),
+                rows.append(dict(joints_deg=target,transition_sec=duration(body,target,100,.3)/scale,
                                  hold_sec=f['hold_sec'],easing='smooth'))
                 phases.append((i,'夹爪开合 → 停顿',repeat))
             previous=target

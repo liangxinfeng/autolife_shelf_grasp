@@ -140,11 +140,13 @@ class VisualPanel(Q.QWidget):
         self.image.pix=G.QPixmap(result['image']);self.image.shape=result['shape'];boxes=[]
         for i,item in enumerate(result['diagnostics']):
             points=item['pixels'];xs=[p[0] for p in points];ys=[p[1] for p in points]
-            boxes.append(dict(id=i,name=item['name']+' · 已识别',box=item.get('object_box',[min(xs),min(ys),max(xs),max(ys)]),mask_contours=item.get('mask_contours',[])))
+            boxes.append(dict(id=i,name=item['name']+(' · 已绑定定位' if item.get('recognition_method')=='bound_visible_rgbd' else ' · 已识别'),box=item.get('object_box',[min(xs),min(ys),max(xs),max(ys)]),mask_contours=item.get('mask_contours',[])))
         self.image.boxes=boxes;self.image.update()
         modes=[d.get('method_label','纹理深度定位') for d in result['diagnostics']]
         text='；'.join(dict.fromkeys(modes))
-        if any(d.get('recognition_method')=='dinov2_object' for d in result['diagnostics']):
+        if any(d.get('recognition_method')=='bound_visible_rgbd' for d in result['diagnostics']):
+            text='已绑定参照 → 可见表面配准（排除遮挡，不做整物体外观评分） → '+text
+        elif any(d.get('recognition_method')=='dinov2_object' for d in result['diagnostics']):
             text='整物体外观记忆识别 → '+text
         if any(d.get('method')=='shape_position' for d in result['diagnostics']):text+='。只调整位置，夹爪朝向保持示教值；请核对模型预览。'
         self.note.setText(text+' XYZ纠偏量见页面顶部；每次真机运行重新定位，原始动作保持不变。')

@@ -3,7 +3,7 @@ from copy import deepcopy
 import uuid
 import math
 
-KINDS = {'navigate': '导航', 'grasp': '抓取', 'place': '放置', 'action': '示教动作', 'base':'底盘定量'}
+KINDS = {'navigate': '导航', 'grasp': '抓取', 'place': '放置', 'action': '示教动作', 'base':'底盘定量', 'tts':'语音播报'}
 
 
 def full_record(record):
@@ -42,6 +42,9 @@ def full_record(record):
     if record.get('visual_bindings'):
         from .visual_reference import record_bindings
         result['visual_bindings']=record_bindings(record)
+    if record.get('retarget_arm'):
+        if record['retarget_arm'] not in ('left','right'):raise ValueError('镜像手臂无效')
+        result['retarget_arm']=record['retarget_arm']
     return result
 
 
@@ -54,9 +57,16 @@ def validate(record):
         kind = row.get('kind'); target = str(row.get('target', '')).strip()
         if kind not in KINDS: raise ValueError('不支持的任务类型')
         if kind not in ('place','base') and not target: raise ValueError('请填写航点、物品或动作名称')
-        if len(target) > 160: raise ValueError('名称过长')
+        if len(target) > (500 if kind=='tts' else 160): raise ValueError('名称过长')
         from .step_posture import normalize
         item=dict(kind=kind,target=target);posture=normalize(row.get('posture'))
+        if kind=='tts':posture=None
+        if kind=='action' and row.get('action_speed_percent') is not None:
+            from .action_speed import percent
+            item['action_speed_percent']=percent(row['action_speed_percent'])
+        if kind=='action' and row.get('execution_arm','original')!='original':
+            if row['execution_arm'] not in ('left','right'):raise ValueError('执行手臂无效')
+            item['execution_arm']=row['execution_arm']
         if posture and posture['body_mode']=='recorded' and kind!='action':
             raise ValueError('沿用动作记录高度仅用于示教动作步骤')
         if kind=='base':

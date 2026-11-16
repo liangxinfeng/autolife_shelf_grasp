@@ -21,6 +21,7 @@ from .unregistered import target_id,temporary_product,estimate_temporary,combine
 from .geometry_memory import GeometryMemory,partial_views
 from .bottle import image_cropped
 from .auto_grasp import CandidateUnavailable
+from .mobile_reach import RepositionRequired
 from .arm_selection import ArmPlannerPool,plan_arm,require_same_arm,gripper_name
 from .calibration_profiles import CalibrationProfiles
 from .task_recognition import task_detection_request,infer_scene
@@ -149,10 +150,20 @@ def main():
             visual=VisualActions(root,run,cfg,robot,snapshot,transform,fk,perception,store)
             while True:
                 try:cmd=commands.get(timeout=.2)
-                except queue.Empty:continue
+                except queue.Empty:
+                    # 空闲/导航期间只预热纯计算；队列来新请求就让出，不操作机器人。
+                    warmed=arm_pool.warm_next(cfg,stopped=lambda:not commands.empty())
+                    if warmed is not None:
+                        with (run/'planner_warmup.jsonl').open('a',encoding='utf8') as stream:
+                            stream.write(json.dumps(dict(warmed,time=time.time()),ensure_ascii=False)+'\n')
+                    continue
                 ident=cmd.get('request_id',0)
                 try:
                     action=cmd['action']
+                    if cmd.get('_mobile_done'):
+                        done=json.loads((run/'mobile_reach_result.json').read_text('utf8'))
+                        if done.get('token')!=cmd['_mobile_done'] or done.get('status')!='completed':
+                            raise ValueError('底盘补偿未完成，不能继续旧目标')
                     if action=='quit':break
                     if action.startswith('visual_'):
                         try:emit('visual_result',visual_id=cmd['visual_id'],action=action,result=visual.handle(cmd))
@@ -167,7 +178,13 @@ def main():
                         arm_pool=ArmPlannerPool(cfg,calibration,fk,Planner,profiles)
                     if (action=='prepare' or action=='auto_prepare' and cfg.get('require_reset_before_grasp',True)) and not cfg.get('workspace_reset_joints'):
                         raise ValueError('请先在“姿态与动作”中调好实机姿态，并点击“将当前姿态设为复位姿态”；不会自动采用旧复位目标')
-                    if action in ('prepare','auto_prepare','scan','scan_task','plan'):
+                    # 2D识别不使用关节坐标；只在准备/三维规划时刷新，避免 scan→plan 连续刷新两次。
+                    if cmd.get('parallel_prepare_token') and action in ('plan','standalone_place'):
+                        from .parallel_prepare import wait_body_ready
+                        wait_body_ready(run,cmd['parallel_prepare_token'])
+                        # 原厂保持会话已主动刷新真实位置，之后由新鲜订阅反馈配对图像。
+                        robot.sample(stationary=True)
+                    elif action in ('prepare','auto_prepare','plan'):
                         emit('status',text='读取真实关节位置…')
                         robot.refresh_measured()
                     if action=='auto_prepare':
@@ -306,6 +323,11 @@ def main():
                             if cfg.get('grasp_backend')=='vendor_ik_trajectory':
                                 planner=arm_pool.for_placement(cfg,lambda:(run/'stop').exists(),
                                     lambda text:emit('status',text=text))
+                                if cmd.get('mobile_reach') and not cmd.get('_mobile_done'):
+                                    from .mobile_reach import place_reposition
+                                    suggestion=place_reposition(planner,q,placement_tcp,grasp,points,table,settings,base_anchor,cloud,
+                                        lambda:(run/'stop').exists(),lambda text:emit('status',text=text))
+                                    if suggestion is not None:raise RepositionRequired(suggestion)
                                 plan=planner.plan_place(q,placement_tcp,grasp,points,table,settings)
                             else:plan=plan_place(planner,q,placement_tcp,grasp,points,table,settings)
                             diag['timing_seconds']['path_planning']=round(time.monotonic()-planning_started,4)
@@ -366,6 +388,7 @@ def main():
                             placement_mode='standalone' if action=='standalone_place' else 'demo',placement_request_id=context['run_id'],
                             parent_plan_id=grasp['plan_id'],demo_settings=settings,
                             calibration_sha256=calibration_sha,tcp_offset_mm=cfg['tcp_offset_mm'],created_monotonic=time.monotonic(),base_anchor=base_anchor)
+                        if cmd.get('parallel_prepare_token'):plan['parallel_prepare_token']=cmd['parallel_prepare_token']
                         filename='place_'+plan['plan_id']+'.json';atomic_json(run/filename,plan)
                         if event=='observe_planned':
                             atomic_json(run/'observation_attempt.json',{'plan_id':plan['plan_id'],'run_id':context['run_id']})
@@ -475,13 +498,34 @@ def main():
                             fresh=reobserve(perception,frame,store,chosen)
                         else:fresh,_=infer_scene(perception,frame,store,mode,task_recognition)
                         from .selection import resolve_selected
-                        selected,identity=resolve_selected(chosen,fresh)
+                        if cmd.get('_mobile_done'):
+                            from .mobile_reach import select_after_move
+                            reference=json.loads((run/'mobile_reach_request.json').read_text('utf8'))
+                            if reference['token']!=cmd['_mobile_done']:raise ValueError('补偿目标已改变')
+                            q_now,T_now=transform(frame)
+                            selected,identity=select_after_move(chosen,fresh,frame,fk.fk('Link_Zero_Point',TORSO,q_now)@T_now,
+                                cfg,reference,robot.base_sample())
+                        else:selected,identity=resolve_selected(chosen,fresh)
                         atomic_json(run/'target_identity.json',identity)
                         if selected is None:raise ValueError(identity['reason'])
                         # Preserve the selection/reference image coordinates for
                         # enrollment and bag-rim picking. Display flow already
                         # follows the live RGB; fresh masks above are for planning.
                         camera.overlay.rename(overlay_items(items),ident)
+                        # 与任务/常规抓取共用：识别到目标后先判断工作范围，尚未进入多帧几何与路径规划。
+                        if cmd.get('mobile_reach') and not cmd.get('_mobile_done') and cfg.get('grasp_backend')=='vendor_ik_trajectory':
+                            from .mobile_reach import grasp_reposition
+                            from .bottle import object_points
+                            q,T=transform(frame);ground=fk.fk('Link_Zero_Point',TORSO,q)
+                            cfg['up_torso']=(ground[:3,:3].T@np.array([0.,0.,1.])).tolist()
+                            try:target_points,_,_=object_points(frame,selected['mask'],T,cfg)
+                            except DepthQualityError:target_points=np.empty((0,3))  # 粗筛缺深度时交回原多帧链路。
+                            if len(target_points)>=20:
+                                early_center=np.median(target_points,axis=0)
+                                cloud,_,_=object_points(frame,frame['depth']>0,ground@T,cfg)
+                                suggestion=grasp_reposition(arm_pool,q,early_center,selected.get('product') or {},cfg,
+                                    robot.base_sample(),cloud,lambda:(run/'stop').exists(),lambda text:emit('status',text=text))
+                                if suggestion is not None:raise RepositionRequired(suggestion)
                         temporary=selected['product'] is None
                         if temporary:
                             selected={**selected,'product':temporary_product(selected,run.name)}
@@ -629,6 +673,7 @@ def main():
                         plan['start_mode']='reset_receipt' if cfg.get('require_reset_before_grasp',True) else 'current_pose'
                         plan['plan_id']=uuid.uuid4().hex;plan['run_id']=run.name
                         plan['instance_id']=selected['id'];plan['request_id']=ident
+                        if cmd.get('parallel_prepare_token'):plan['parallel_prepare_token']=cmd['parallel_prepare_token']
                         filename='plan_'+plan['plan_id']+'.json'
                         atomic_json(run/filename,plan)
                         atomic_json(root/'data/last_plan.json',plan)
@@ -664,6 +709,14 @@ def main():
                              checked=plan['checked_states'],
                              blockers=execution_blockers(cfg)+([] if not cfg.get('require_reset_before_grasp',True) or plan['prepare_token'] else ['复位尚未成功，请先复位并准备']))
                     else:raise ValueError('未知操作')
+                except RepositionRequired as exc:
+                    proposal=exc.proposal
+                    proposal['request_id']=ident
+                    proposal['camera_cfg']=dict(cfg)
+                    proposal['camera_to_base']=(ground@T).tolist()
+                    proposal['resume']={k:v for k,v in cmd.items() if k not in ('parallel_prepare_token','request_id')}
+                    atomic_json(run/'mobile_reach_proposal.json',proposal)
+                    plan=None;emit('base_reposition',request_id=ident,proposal=proposal)
                 except Exception as exc:
                     atomic_json(run/'last_error.json',{'action':cmd.get('action'),'request_id':ident,'reason':str(exc),'time':time.time()})
                     plan=None;emit('error',request_id=ident,text=str(exc),

@@ -1,0 +1,55 @@
+{
+  "status": "installed_and_software_verified_ready_for_source_snapshot",
+  "written_at": "2026-11-16T05:06:57.958561-05:00",
+  "robot": "345",
+  "address": "192.168.8.176",
+  "source_path": "/home/ubuntu/ros2_ws/src/autolife_shelf_grasp_306",
+  "pending_install_changes": false,
+  "service_restarted": false,
+  "automatic_motion_sent": false,
+  "changes": [
+    "Stationary grasp and placement take current full leg/waist URDF transform and existing waist participation range into account before proposing chassis compensation. Possible stationary reach returns to the unchanged original planner.",
+    "Removed exact gripper endpoint arrival waits in grasp/place opening/closing, parallel preparation, reset completion and end handoff. Timed bounded commands retain closing target; not a claim of measured grip success.",
+    "Physical minimum jaw aperture for the checked grasp/release path, real communication validity, cancellation and arm/body path checks remain."
+  ],
+  "validation": {
+    "regression_passed": 363,
+    "baseline_deselected": 9,
+    "deselection_reason": "8 preexisting fixture failures in test_closure_mapping_and_plan_binding and 1 preexisting test_lidar_known_mounting expectation; reproduced on unmodified baseline.",
+    "actual_frontdesk_precheck_seconds": 0.004717329,
+    "actual_frontdesk_chassis_proposal": null,
+    "actual_frontdesk_original_planner_checked_states": 1562,
+    "actual_frontdesk_original_planner_seconds": 3.911726382,
+    "model_height_cases": 18,
+    "model_height_description": "Both arms at 0 and forward/reverse lowering input settings 10/20/30/40 cm. Actual positions always derived from resulting URDF joints. No real height movement.",
+    "formal_source_imports": "passed",
+    "formal_system_python_ui": "passed",
+    "user_data_hash_unchanged": true,
+    "physical_motion_test": "Not performed after this installation; needs supervised user test."
+  },
+  "installed_hashes": {
+    "autolife_shelf_grasp_306/execution.py": "e8f360dcb475843daaacec371efad55757792a969c412c36bcb4655c626d074f",
+    "autolife_shelf_grasp_306/grasp_gripper.py": "fb6d044a1f41f103eef526adf6a4916ddaf3d3508d708538261b3cd0b8a48957",
+    "autolife_shelf_grasp_306/mobile_reach.py": "e24075ca5f6ce0c465b424aef71ddac6fb6a6125dced82100da4a6977b240531",
+    "autolife_shelf_grasp_306/parallel_prepare.py": "b082b4b44b547bb85d94c1a489e7ac4e0ded0cb28bfc54ccd1b9ccc468d008ea",
+    "autolife_shelf_grasp_306/pose_handoff.py": "2c95b23a53c91624370d4e09d00d06756ce763e5eb0ad1b66c72549f5ac24de5",
+    "autolife_shelf_grasp_306/prepare.py": "698dc3c7417d8dafacbc9e464da4e3e68e8c6d58a20b467f8e74f9de58f757f8",
+    "test/test_grasp_gripper_execution.py": "2fff08a365c48a18886a1a832938e42fa99baa1697af0caefddbc10e5216864c",
+    "test/test_gripper_timed_completion.py": "e4679a69ec6a5b4e49d2c3355b57571e67c172a68e4a660b3d8971067a328cac",
+    "test/test_handoff_speed.py": "6b1ce31696ae3367f4295af2ff8a53a18652e1e4c6b77a9322bc34386a837689",
+    "test/test_mobile_omni.py": "2c7b52ac2333385cb92cf212e7fba7efad28c8a1f17d02ca1e6e932567ffe4ec",
+    "test/test_mobile_reach.py": "067a01ecfa928b18f864dd19e2c5ce511128317978a1aa4b8fc3ce94099be4c0",
+    "test/test_opening_endpoint.py": "538ae8a65df20b963d770a962b78a16eb3aa9beb176fcae8bfa891b488dffc12",
+    "test/test_parallel_prepare.py": "ea83dd2d67370321ba95f9f1bb343cbecd5b24611c7bb5713849161722f234ad",
+    "test/test_place_release.py": "f3bb6eb842a2a1aa480a61846d4da79a31c89aa685f2c2af794b83e7f42a3fd7",
+    "test/test_prepare.py": "538e70059b38a1843e4fc9fa964685a93192aed4d1fe52bb25e98b26d63226f9",
+    "test/test_stationary_workspace.py": "1c1effde696d72ab4d7529c7aba94f7ca374992d2c1b0aed309a09b142569240"
+  },
+  "evidence_files": [
+    "original_first_verify2.log",
+    "stationary_actual_replay.log",
+    "height_actual_replay.log",
+    "install_original_first.log"
+  ],
+  "publishing_note": "Take the final source snapshot from robot, not the older local source/omni_source directories. Other chat owns GitHub publication. No further source installation is pending in this task."
+}

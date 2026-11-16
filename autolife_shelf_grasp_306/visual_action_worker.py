@@ -32,29 +32,19 @@ class VisualActions:
         q=self.robot.sample(stationary=True)
         if max(abs(q[n]-source[n]) for n in BODY_JOINTS)>.5:raise ValueError('拍摄或计算期间机器人姿态改变，请停稳后重新定位参照')
     def observe(self,ident,frame,T,current=None,position_only=False):
-        from .visual_object_memory import ObjectAppearanceMemory
+        from .visual_bound_registration import BoundReferenceLocator
         self.last_observed_mask=None
         try:
-            # 先认整物体；外观识别不依赖可用SIFT点和深度点恰好重合。
-            if hasattr(self.perception,'embed'):
-                if not hasattr(self,'appearance_memory'):
-                    self.appearance_memory=ObjectAppearanceMemory(self.perception,self.cfg)
+            if getattr(self.perception,'segmenter',None) is not None:
+                if not hasattr(self,'bound_locator'):
+                    self.bound_locator=BoundReferenceLocator(self.perception,self.cfg)
                 raw=self.store.views(ident)
-                found=self.appearance_memory.recognize(self.store,ident,raw,frame)
-                if found is not None:
-                    item,recognition=found
-                    try:return self.locate_mask(raw,raw,frame,T,item,position_only,recognition)
-                    except ValueError:
-                        # 整物体检索已确定身份，只在该物体框内细化SAM轮廓。
-                        h,w=frame['image'].shape[:2]
-                        box=np.asarray(item['box'],float)/[w,h,w,h]
-                        return self.observe_box(raw,raw,frame,T,box,position_only,recognition)
-            # 非通用类别仍保留纹理定位，不用外观低分直接否定旧的可靠参照。
-            try:return self.observe_texture(ident,frame,T,current,position_only)
-            except ValueError as exc:
-                if hasattr(self.perception,'embed'):
-                    raise ValueError('当前画面未找到可可靠定位的已记忆物体；请确认目标在画面内、未被遮挡后重新预览，已有记录保留，无需删除重录。') from exc
-                raise
+                if not all(k in raw[0][1] for k in ('depth','image','mask','K','D')):
+                    return self.observe_texture(ident,frame,T,current,position_only)
+                result=self.bound_locator.locate(self.store,ident,raw,frame,T,position_only,self.locate_mask)
+                if result is not None:return result
+            # 自定义非通用名称没有候选时，使用已记录纹理直接配准，不重新做身份分数门槛。
+            return self.observe_texture(ident,frame,T,current,position_only)
         except ValueError as exc:
             self.save_observation_failure(ident,frame,T,str(exc))
             raise
@@ -107,9 +97,11 @@ class VisualActions:
         """仅覆盖当前运行目录的一份诊断帧，便于离线排查；不写物体库。"""
         if not hasattr(self,'run'):return
         try:
-            import os
+            import os,json
             data={k:frame[k] for k in ('image','depth','K','D')}
             if self.last_observed_mask is not None:data['mask']=self.last_observed_mask
+            memory=getattr(self,'bound_locator',None)
+            data['recognition_diagnostics']=np.array(json.dumps(getattr(memory,'last_diagnostics',[]),ensure_ascii=False))
             target=self.run/'visual_observation_failed.npz';tmp=target.with_suffix('.tmp')
             with tmp.open('wb') as stream:np.savez_compressed(stream,**data,T=T,reference=np.array(ident),error=np.array(error))
             os.replace(tmp,target)
@@ -137,29 +129,33 @@ class VisualActions:
         from .bottle import object_points
         self.last_observed_mask=item['mask']
         whole=dict(points=np.empty((0,3)),pixels=np.empty((0,2)),descriptors=np.empty((0,128),np.float32))
+        # 先验证RGB-D对齐；整理只作用于本次内存副本，初始物体参照永不改写。
+        cloud,_,_=object_points(frame,item['mask'],T,self.cfg,False)
+        from .visual_depth_surface import surface_pair
+        first,original=raw_views[0]
+        observed=frame;depth_stats=dict(depth_filter='stored_surface')
+        # 旧记录可能只存特征和点云；继续使用原配准链，不强制用户重新录入。
+        if all(k in original for k in ('depth','mask','K','D')):
+            original,observed,depth_stats=surface_pair(original,first['camera_pose'],dict(frame,mask=item['mask']),T,self.cfg)
+            cloud=observed['cloud']
         canonical=[v for v in banks if v[0].get('metric_registered',True)]
-        cloud,_,_=object_points(frame,item['mask'],T,self.cfg)
-
         try:
-            whole=features(frame,self.cfg,T,item['mask'],augment=True)
+            whole=features(observed,self.cfg,T,item['mask'],augment=True)
             delta,stats,matched,arrays=register_views(canonical,whole)
             if position_only and stats['angle_resolution_deg']>3:
                 raise ValueError('纹理过于集中，改用完整轮廓估计位置')
-            stats['surface_overlap']=validate_surface(arrays['cloud'],cloud,delta)
+            stats['surface_overlap']=validate_surface(arrays['cloud'],cloud,delta,True)
             stats.update(method='texture_rigid',method_label='物体纹理＋深度定位',orientation_observed=True)
         except ValueError as exc:
             if not position_only:
                 raise ValueError('物体已认出，但当前表面无法可靠确定初始朝向。若动作只需跟随物体位置，请选择“只纠正位置”；补录已参与识别，无需重新录入。') from exc
             from .visual_shape_position import position_from_shape
-            # 必须与初始帧比较，不能拿补录时随意摆放的位置替换动作参照。
-            first,original=raw_views[0]
-            observed={**frame,'mask':item['mask'],'cloud':cloud}
             delta,stats=position_from_shape(original,first['camera_pose'],observed,T,self.cfg)
-            stats['surface_overlap']=validate_surface(original['cloud'],cloud,delta)
-            if stats['surface_overlap']<.55:
-                raise ValueError('物体已认出，但深度形状重叠不足；请露出完整物体后重新预览')
+            stats['surface_overlap']=validate_surface(original['cloud'],cloud,delta,True)
+        stats.update(depth_stats)
         from .segmentation_display import display_contours
-        stats.update(recognition,object_box=item.get('box'),mask_contours=display_contours(item))
+        stats.update(recognition,object_box=item.get('box'),mask_contours=display_contours(item),
+                     surface_validation='current_visible_to_reference',depth_points=len(cloud))
         return delta,stats,item,whole,cloud
     def save_view(self,prepared):
         meta=prepared['meta'];arrays=prepared['arrays'];ident=prepared['reference']
@@ -228,6 +224,14 @@ class VisualActions:
         record=full_record(cmd['record']);bindings=record_bindings(record)
         if not bindings:raise ValueError('当前动作没有关联物体的姿态')
         self.robot.refresh_measured();base=self.robot.base_sample();frame,source,T=self.sample()
+        if cmd.get('prepare_token'):
+            from .core import atomic_json
+            # 先刷新并捕获真实起点，随后物体匹配/纠偏计算与保持式使能重叠。
+            atomic_json(self.run/'action_prepare_source.json',dict(token=cmd['prepare_token'],source=source,stamp=time.monotonic()))
+        if record.get('retarget_arm'):
+            from .action_retarget import retarget
+            record=retarget(record,record['retarget_arm'],source,self.geometry,self.store.directory.parent)
+            bindings=record_bindings(record)
         timings['feedback_capture_sec']=time.perf_counter()-started;stage_started=time.perf_counter()
         current=None;observations={};diagnostics=[]
         for ident in dict.fromkeys(v['reference'] for v in bindings.values()):
@@ -240,8 +244,9 @@ class VisualActions:
                 raise ValueError('参照旋转证据不足，请重新观察或将该姿态设为“只纠正位置”')
             from scipy.spatial.transform import Rotation
             distance=float(np.linalg.norm(new[:3,3]-old[:3,3]));angle=float(np.degrees(Rotation.from_matrix(delta[:3,:3]).magnitude()))
-            if distance>.20 or angle>30:raise ValueError(f'参照变化{distance*1000:.0f}mm/{angle:.1f}°超出本版局部纠偏范围（200mm/30°），请调整停靠位置')
-            observations[ident]=(old,new);diagnostics.append(dict(reference=ident,name=meta['name'],offset_mm=((new[:3,3]-old[:3,3])*1000).tolist(),angle_deg=angle,**stats))
+            # 大偏移不等于错误匹配。保留身份、深度和旋转证据检查，实际可用
+            # 范围由下面的IK、关节限位和完整平滑路径检查决定，不截断纠偏量。
+            observations[ident]=(old,new);diagnostics.append(dict(reference=ident,name=meta['name'],offset_mm=((new[:3,3]-old[:3,3])*1000).tolist(),angle_deg=angle,distance_mm=distance*1000,range_policy='ik_and_full_path',**stats))
         timings['recognition_sec']=time.perf_counter()-stage_started;stage_started=time.perf_counter()
         result=clone_without_bindings(record);previous=source;checked=0
         from .pose_ik_worker import PoseSolver
@@ -253,7 +258,6 @@ class VisualActions:
                 solver=self.solvers[side];_,new=observations[bound['reference']];old=matrix(bound['taught_object_pose'])
                 # 只改变选中七轴；腰腿、另一只手臂及夹爪仍取该示教帧原值。
                 target=corrected_tcp(old,new,bound['relative_tcp'],bound['mode'])
-                if np.linalg.norm(new[:3,3]-old[:3,3])>.20:raise ValueError('相对该姿态示教位置变化超过200mm，请调整停靠点')
                 solved=solver.calculate(dict(operation='solve',source=row['joints_deg'],seed=previous,target=target.tolist()))
                 row['joints_deg'].update(solved['joints']);checked+=solved['checked_states']
             previous=row['joints_deg']

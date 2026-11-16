@@ -74,9 +74,14 @@ class MapView(Q.QWidget):
             # same world transform as the robot, including non-zero map yaw.
             a=point(om['x'],om['y']+om['height']*om['resolution']);b=point(om['x']+om['width']*om['resolution'],om['y'])
             p.drawPixmap(C.QRectF(a,b).normalized(),obstacle,C.QRectF(obstacle.rect()))
+        for name,chain in self.data.get('parking_chains',{}).items():
+            points=list(chain.get('points',[]))
+            if chain.get('closed') and points:points.append(points[0])
+            p.setPen(G.QPen(G.QColor('#39d0c4'),2))
+            for a,b in zip(points,points[1:]):p.drawLine(point(*a),point(*b))
         for name,pose in self.data.get('waypoints',{}).items():
             pt=point(*pose[:2]);p.setPen(G.QColor('#19bacc'));p.setBrush(G.QColor('#19bacc'));p.drawEllipse(pt,3,3)
-            p.drawText(pt+C.QPointF(5,-3),name)
+            p.drawText(pt+C.QPointF(5,-3),name+(' · 停靠链' if name in self.data.get('parking_chains',{}) else ''))
         pose=self.data.get('pose') or self.data.get('pending_pose')
         if pose:
             pending=not self.data.get('pose')
@@ -181,7 +186,8 @@ class NavigationPanel(Q.QWidget):
         self.load.setEnabled(allowed and self.data.get('service_ready',False))
         self.locate.setEnabled(allowed and self.data.get('localization_ready',False))
         self.start_button.setEnabled(allowed and not self.data.get('ready',False) and not self.data.get('starting',False))
-        self.start_button.setText('导航已连接' if self.data.get('ready') else '启动中…' if self.data.get('starting') else '启动导航')
+        self.start_button.setText('恢复就绪中…' if self.data.get('recovering') else
+            '导航已连接' if self.data.get('service_ready') else '启动中…' if self.data.get('starting') else '启动导航')
         if self.dialog:self.dialog.refresh()
     def show_map(self):
         if self.dialog:self.dialog.raise_();self.dialog.activateWindow();return
@@ -199,7 +205,7 @@ class NavigationPanel(Q.QWidget):
     def selection(self):
         if time.time()-self.data.get('snapshot_time',0)>2.:raise ValueError('抓取窗口的导航状态更新中断，请重开抓取窗口')
         if self.data.get('map_fault'):raise ValueError('地图切换尚未完整确认，请重新加载地图')
-        if not self.data.get('ready'):raise ValueError('请点击“启动导航”，然后在放大地图中完成定位')
+        if not self.data.get('ready'):raise ValueError(navigation_summary(self.data))
         if not self.data.get('pose'):raise ValueError(self.data.get('pose_reason') or '尚未收到有效定位坐标')
         front=self.front.currentData();shelf=self.shelf.currentData();pid=self.product.currentData()
         if not front or not shelf or front==shelf or not pid:raise ValueError('请选择不同的前台、货架航点和饮料')

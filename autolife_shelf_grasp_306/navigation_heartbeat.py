@@ -10,7 +10,10 @@ import time
 
 
 class SourceLease:
-    def __init__(self, run, timeout=.30, exit_timeout=3.):
+    def __init__(self, run, timeout=.75, exit_timeout=3.):
+        # Qt绘图/文件IO短暂调度超过300ms并不等于退出；源端最多容忍750ms。
+        # ROS心跳仍每40ms发布，仲裁器300ms接收超时保持不变。
+        # 任一源持续卡死仍停发，绝不以后台线程伪造UI/执行器存活。
         self.paths=[Path(run)/'heartbeat',Path(run)/'navigation_bridge_heartbeat']
         self.timeout=timeout;self.exit_timeout=exit_timeout;self.failed_at=None;self.reason=''
 

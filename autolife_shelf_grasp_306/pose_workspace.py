@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from PyQt5 import QtCore as C,QtWidgets as Q
 from control_center_joint_control.joint_definitions import ALL_JOINTS,JOINT_LABELS,JOINT_LIMITS,GROUPS,group_joint_names
-from .pose_workspace_data import PoseStore,frame,compose,checked_targets
+from .pose_workspace_data import PoseStore,frame,checked_targets
 from .teaching_motion import compile_action,total_time
 from .teaching_trajectory import plan,sample
 from .teaching_library import TeachingLibrary
@@ -41,7 +41,6 @@ class PoseWorkspace(Q.QWidget):
         self.value.valueChanged.connect(self.numeric);self.slider.valueChanged.connect(lambda v:self.numeric(v/10))
         self.group.currentIndexChanged.connect(self.group_changed);self.joint.currentIndexChanged.connect(self.joint_changed)
         self.make_ik();self.make_height();self.make_mirror()
-        row=Q.QHBoxLayout();row.addWidget(Q.QLabel('姿态 / 复位速度'));self.manual_speed=self.spin(25,100,5,' %');self.manual_speed.setValue(self.pose_speed());self.manual_speed.setToolTip('已保存姿态与抓取页全身复位共用；25～100%，不改变原厂电机参数');self.manual_speed.valueChanged.connect(self.save_pose_speed);row.addWidget(self.manual_speed);p.addLayout(row)
         library=Q.QGroupBox('姿态库');form=Q.QVBoxLayout(library);p.addWidget(library)
         self.pose_list=Q.QComboBox();self.pose_list.setMinimumContentsLength(12);form.addWidget(self.pose_list)
         self.pose_use_object=Q.QCheckBox('执行时使用物体参照纠偏')
@@ -108,9 +107,11 @@ class PoseWorkspace(Q.QWidget):
             self.draft_checked=True
             if self.draft_path.exists():
                 try:
-                    d=json.loads(self.draft_path.read_text('utf8'));d=compose(d['name'],d['frames'],d.get('speed',70))
+                    d=json.loads(self.draft_path.read_text('utf8'));restored_speed=d.get('speed',100)
+                    from .action_speed import compose as compose_action
+                    d=compose_action(d['name'],d['frames'],restored_speed)
                     if Q.QMessageBox.question(self,'恢复动作草稿','恢复上次未保存的手动动作串？',Q.QMessageBox.Yes|Q.QMessageBox.No,Q.QMessageBox.Yes)==Q.QMessageBox.Yes:
-                        self.rows=d['frames'];self.sequence_name.setText(d['name']);self.overall_speed.setValue(100);self.dirty=True;self.render_rows()
+                        self.rows=d['frames'];self.sequence_name.setText(d['name']);self.overall_speed.setValue(restored_speed);self.dirty=True;self.render_rows()
                 except Exception as exc:self.message('草稿未加载：'+str(exc),True)
         self.reload_poses();self.reload_actions()
     def group_changed(self):
@@ -165,7 +166,7 @@ class PoseWorkspace(Q.QWidget):
         try:
             from .pose_workspace_motion import begin
             (self.owner.run/'stop').unlink(missing_ok=True)
-            begin(self.studio.engine,'manual-pose-'+str(time.time_ns()),values,source,self.manual_speed.value()/100.,profile)
+            begin(self.studio.engine,'manual-pose-'+str(time.time_ns()),values,source,self.pose_speed()/100.,profile)
         except Exception:
             if self.studio.engine.bridge is None:self.studio._unlock()
             raise
@@ -215,15 +216,13 @@ class PoseWorkspace(Q.QWidget):
     def pose_speed(self):
         from .pose_execution_profile import read_speed
         return read_speed(self.owner.root)
-    def save_pose_speed(self,value):
-        from .pose_execution_profile import save_speed
-        save_speed(self.owner.root,value)
+
     def refresh_reset(self):
         from .workspace_reset import reset_path
         path=reset_path(self.owner.root)
         if path.exists():
             name=json.loads(path.read_text('utf-8')).get('reference',{}).get('pose_name')
-            self.reset_note.setText('抓取页复位目标：'+(name+'（已保存全身姿态）' if name else '实机全身快照')+'；速度与本页共用')
+            self.reset_note.setText('抓取页复位目标：'+(name+'（已保存全身姿态）' if name else '实机全身快照')+'；沿用已配置的姿态执行速度')
         else:self.reset_note.setText('尚未设置复位目标：选择已保存姿态后点击“设为抓取复位”，或保存实机当前姿态。')
     def reset_changed(self):
         from .core import atomic_json
@@ -249,7 +248,7 @@ class PoseWorkspace(Q.QWidget):
         q=self.capture();name=self.pose_list.currentText()
         if not name:raise ValueError('请选择已保存姿态')
         from .pose_execution_profile import pose_record
-        record=pose_record(self.store.read()[name],q,self.manual_speed.value(),name);bound=self.store.binding(name)
+        record=pose_record(self.store.read()[name],q,self.pose_speed(),name);bound=self.store.binding(name)
         if bound and self.pose_use_object.isChecked():record['visual_bindings']={'0':bound}
         self.execute_record(record)
     def execute_record(self,record):
@@ -281,7 +280,7 @@ class PoseWorkspace(Q.QWidget):
         self.row(p,self.button('上移',lambda:self.move_row(-1)),self.button('下移',lambda:self.move_row(1)),self.button('移除',self.remove_row))
         self.row_hold=self.spin(0,30,.1,' 秒');self.row_hold.setDecimals(1);self.row_hold.valueChanged.connect(self.change_row_hold)
         self.row(p,Q.QLabel('选中姿态停顿'),self.row_hold,self.button('全部连续通过',self.make_continuous))
-        row=Q.QHBoxLayout();row.addWidget(Q.QLabel('整体速度'));self.overall_speed=self.spin(25,100,5,' %');self.overall_speed.setValue(70);self.overall_speed.valueChanged.connect(self.mark_dirty);row.addWidget(self.overall_speed);p.addLayout(row)
+        row=Q.QHBoxLayout();row.addWidget(Q.QLabel('整体速度'));self.overall_speed=self.spin(25,150,5,' %');self.overall_speed.setDecimals(0);self.overall_speed.setValue(100);self.overall_speed.setToolTip('与任务编排的动作速度一致：100%为标准速度，最高150%；提速仍受平滑与跟随能力约束；停顿时间不缩放，不修改电机参数');self.overall_speed.valueChanged.connect(self.mark_dirty);row.addWidget(self.overall_speed);p.addLayout(row)
         self.row(p,self.button('保存动作串',self.save_action),self.button('▶ 模型预演',self.toggle_preview),self.button('真机运行…',self.run_action))
         self.visual_toggle=self.button('暂停选中姿态纠偏',self.clear_visual)
         self.row(p,self.button('定位参照并预览纠偏',self.preview_visual),self.visual_toggle)
@@ -336,7 +335,9 @@ class PoseWorkspace(Q.QWidget):
         self.available()
         for row in self.rows:row['hold_sec']=0.
         self.mark_dirty();self.render_rows();self.message('中间姿态已设为连续通过；夹爪交互点仍先到位再开合。保存动作串后，任务调用同样生效。')
-    def draft(self):return compose(self.sequence_name.text().strip(),self.rows,self.overall_speed.value())
+    def draft(self):
+        from .action_speed import compose as compose_action
+        return compose_action(self.sequence_name.text().strip(),self.rows,self.overall_speed.value())
     def reload_actions(self):
         selected=self.action_list.currentText();records=self.actions.records();self.action_list.clear()
         self.action_list.addItems(sorted(n for n,r in records.items() if 'trajectory' not in r));self.action_list.setCurrentText(selected)
@@ -349,7 +350,7 @@ class PoseWorkspace(Q.QWidget):
     def new_action(self):
         self.available()
         if not self.discard():return
-        self.rows=[];self.loaded='';self.revision=None;self.sequence_name.clear();self.overall_speed.setRange(25,100);self.overall_speed.setValue(70);self.dirty=False;self.end_preview();self.render_rows();self.draft_path.unlink(missing_ok=True)
+        self.rows=[];self.loaded='';self.revision=None;self.sequence_name.clear();self.overall_speed.setRange(25,150);self.overall_speed.setValue(100);self.dirty=False;self.end_preview();self.render_rows();self.draft_path.unlink(missing_ok=True)
     def load_action(self):
         self.available();name=self.action_list.currentText()
         if not name:raise ValueError('请选择动作串')
@@ -357,8 +358,8 @@ class PoseWorkspace(Q.QWidget):
         d=self.actions.load(name)
         if d.get('kind')=='trajectory':raise ValueError('连续轨迹请在遥操动作编排器编辑')
         self.rows=d['frames'];self.loaded=name;self.revision=self.actions.revision;self.sequence_name.setText(name)
-        self.overall_speed.blockSignals(True);self.overall_speed.setRange(max(25,int(np.ceil(2500/min(r['speed_percent'] for r in self.rows)))),100);self.overall_speed.setValue(100);self.overall_speed.blockSignals(False)
-        # 100%表示保持载入时的节奏；整体速度按比例缩放各帧，不抹去原节奏。
+        from .action_speed import editor_speed
+        self.overall_speed.blockSignals(True);self.overall_speed.setRange(25,150);self.overall_speed.setValue(editor_speed(d));self.overall_speed.blockSignals(False)
         self.dirty=False;self.end_preview();self.render_rows(0)
     def save_action(self):
         self.available();d=self.draft()

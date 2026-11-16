@@ -17,7 +17,7 @@ def test_plateau_during_ramp_is_not_contact():
     assert result=='contact_unconfirmed'
 
 
-@pytest.mark.parametrize('stop_at,expected',[(None,'at_target'),(135.,'contact_unconfirmed'),(114.,'timeout')])
+@pytest.mark.parametrize('stop_at,expected',[(None,'command_completed_unverified'),(135.,'command_completed_unverified'),(114.,'command_completed_unverified')])
 def test_actual_output_reaches_command_with_bounded_slew(tmp_path,stop_at,expected):
     path=tmp_path/'curve.json';path.write_text(json.dumps(dict(robot_id=345,hardware='dm_type1',measured=True,
         arms={'right':[[5,330],[45,180],[90,10]]})))

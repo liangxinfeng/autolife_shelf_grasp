@@ -6,13 +6,13 @@ from PyQt5 import QtCore as C, QtWidgets as Q
 from .task_flow import Cursor, KINDS, validate, select_candidates
 from .core import atomic_json
 from .task_pause import defer_call
-from .task_capabilities import uses_perception, require_perception, starts_with_grasp
+from .task_capabilities import require_perception, starts_with_grasp, worker_required_now
 
 
 class FlowDialog(Q.QDialog):
     def __init__(self, owner):
-        super().__init__(owner); self.owner = owner; self.resize(1100, 580)
-        self.setWindowTitle('任务流程 · 导航 / 抓取 / 放置 / 示教动作 / 底盘定量')
+        super().__init__(owner); self.owner = owner; self.resize(1280, 640)
+        self.setWindowTitle('任务流程 · 导航 / 抓取 / 放置 / 示教动作 / 底盘定量 / 语音')
         self.path = owner.root / 'data/task_flows.json'
         self.library = json.loads(self.path.read_text('utf-8')) if self.path.exists() else {}
         layout = Q.QVBoxLayout(self); row = Q.QHBoxLayout(); layout.addLayout(row)
@@ -25,8 +25,8 @@ class FlowDialog(Q.QDialog):
             capability.setWordWrap(True);layout.addWidget(capability)
         refresh=Q.QPushButton('刷新航点');refresh.clicked.connect(self.refresh_waypoints);nav_row.addWidget(refresh)
         self.navigation_button=Q.QPushButton('导航地图 / 定位');self.navigation_button.clicked.connect(self.navigation_map);nav_row.addWidget(self.navigation_button)
-        self.table = Q.QTableWidget(0, 5); self.table.setHorizontalHeaderLabels(['步骤类型', '航点 / 物品 / 示教动作名称','身体高度方式','下降高度(cm)','头部俯仰(°)'])
-        for col,width in ((0,85),(2,170),(3,135),(4,185)):self.table.setColumnWidth(col,width)
+        self.table = Q.QTableWidget(0, 7); self.table.setHorizontalHeaderLabels(['步骤类型', '航点 / 物品 / 动作名称 / 播报文字','身体高度方式','下降高度(cm)','头部俯仰(°)','执行手臂','动作速度'])
+        for col,width in ((0,105),(2,150),(3,125),(4,155)):self.table.setColumnWidth(col,width)
         self.table.horizontalHeader().setSectionResizeMode(1, Q.QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
         row = Q.QHBoxLayout(); layout.addLayout(row)
@@ -38,8 +38,11 @@ class FlowDialog(Q.QDialog):
         note = Q.QLabel('高度为从最高站姿下降：正向0～56cm，反向0～53cm。头部0°正前方，正数俯视，负数仰视。\n导航途中调姿，二者完成后继续；抓取复位后调姿再识别；放置/示教动作开始前调姿。示教动作默认沿用记录的身体高度及其全过程变化，不额外插入单独升降。')
         note.setWordWrap(True); layout.addWidget(note)
         row = Q.QHBoxLayout(); layout.addLayout(row)
-        for label, fn in [('保存流程', self.save), ('删除流程', self.delete), ('开始流程', self.start)]:
+        for label, fn in [('保存流程', self.save), ('删除流程', self.delete), ('试听选中语音',self.preview_voice), ('开始流程', self.start)]:
             button = Q.QPushButton(label); row.addWidget(button); button.clicked.connect(fn)
+        self.continue_button=Q.QPushButton('手动继续');row.addWidget(self.continue_button)
+        self.continue_button.clicked.connect(self.continue_task)
+        self.progress=Q.QLabel();self.progress.setWordWrap(True);layout.addWidget(self.progress)
         self.names.currentTextChanged.connect(self.load)
         self.waypoint_timer=C.QTimer(self);self.waypoint_timer.setInterval(750)
         self.waypoint_timer.timeout.connect(self.refresh_waypoints)
@@ -57,9 +60,15 @@ class FlowDialog(Q.QDialog):
         finally:panel.dialog=None;dialog.deleteLater()
 
     def done(self,result):
-        self.waypoint_timer.stop();super().done(result)
+        self.waypoint_timer.stop()
+        if hasattr(self,'voice_preview'):self.voice_preview.stop()
+        super().done(result)
 
     def refresh_waypoints(self):
+        self.owner.controls()
+        self.continue_button.setEnabled(self.owner.flow_retry.isEnabled())
+        self.continue_button.setToolTip(self.owner.flow_retry.toolTip())
+        self.progress.setText(self.owner.flow_label.text())
         names=self.choices('navigate');data=self.owner.navigation.data
         from pathlib import Path
         label=Path(data.get('active_map') or '').stem or '当前地图'
@@ -79,6 +88,11 @@ class FlowDialog(Q.QDialog):
         self.nav_note.setText(f'{label} · {len(names)}个航点 · {suffix}' if names else
             '尚未读取到航点，请在控制中心选择有航点的地图后刷新')
 
+    def continue_task(self):
+        self.owner.workflow.retry_current()
+        if self.owner.workflow.active:self.accept()
+        else:self.refresh_waypoints()
+
     def choices(self, kind):
         if kind == 'navigate':
             from .navigation_logic import waypoint_names
@@ -87,9 +101,10 @@ class FlowDialog(Q.QDialog):
         if kind == 'grasp':
             path = self.owner.root/'data/products.json'
             return [p['name'] for p in json.loads(path.read_text()).get('products', [])] if path.exists() else []
+        if kind=='tts':return []
         return ['当前桌面']
 
-    def add(self, kind, target, posture=None, base=None):
+    def add(self, kind, target, posture=None, base=None, execution_arm="original", action_speed_percent=None):
         row = self.table.rowCount(); self.table.insertRow(row)
         item = Q.QTableWidgetItem(KINDS[kind]); item.setData(C.Qt.UserRole, kind)
         item.setFlags(item.flags() & ~C.Qt.ItemIsEditable); self.table.setItem(row, 0, item)
@@ -130,18 +145,42 @@ class FlowDialog(Q.QDialog):
         angle.valueChanged.connect(lambda _:enable.setChecked(True))
         head_row.addWidget(enable);head_row.addWidget(angle);head.enable=enable;head.angle=angle
         self.table.setCellWidget(row,2,direction);self.table.setCellWidget(row,3,height);self.table.setCellWidget(row,4,head)
-        self.table.setRowHeight(row,56)
+        arm=Q.QComboBox();arm.addItem('原动作','original');arm.addItem('左手（镜像右手）','left');arm.addItem('右手（镜像左手）','right')
+        arm.setCurrentIndex(max(0,arm.findData(execution_arm)));arm.setEnabled(kind=='action')
+        arm.setToolTip('镜像指定侧的手臂与夹爪，另一手保持当前姿态；腰腿/头部沿用原动作。关联物体的姿态继续按现场物体纠偏。')
+        self.table.setCellWidget(row,5,arm);self.table.setColumnWidth(5,160)
+        from .action_speed_ui import ActionSpeedCell
+        speed=ActionSpeedCell(self.table,action_speed_percent) if kind=='action' else Q.QLabel('—')
+        self.table.setCellWidget(row,6,speed);self.table.setColumnWidth(6,165)
+        if kind=='tts':
+            box.setStyleSheet('QComboBox::drop-down {width:0px;} QComboBox::down-arrow {image:none;}')
+            box.lineEdit().setPlaceholderText('输入要播报的中文文字，最多500字')
+        for col in ([2,3,4,5] if kind=='tts' else [5] if kind!='action' else []):
+            blank=Q.QLabel('—');blank.setAlignment(C.Qt.AlignCenter);blank.setEnabled(False)
+            self.table.setCellWidget(row,col,blank)
+        self.table.setRowHeight(row,76)
 
     def record(self):
-        return validate({'steps': [dict(kind=self.table.item(i, 0).data(C.Qt.UserRole),
-            target=('底盘定量动作' if self.table.item(i,0).data(C.Qt.UserRole)=='base' else self.table.cellWidget(i, 1).currentText()),
-            base=(self.table.cellWidget(i,1).value if self.table.item(i,0).data(C.Qt.UserRole)=='base' else None),posture=dict(
-                body_mode=self.table.cellWidget(i,2).currentData(),lowering_cm=self.table.cellWidget(i,3).value(),
-                head_pitch_deg=self.table.cellWidget(i,4).angle.value() if self.table.cellWidget(i,4).enable.isChecked() else None)) for i in range(self.table.rowCount())]})
+        rows=[]
+        for i in range(self.table.rowCount()):
+            kind=self.table.item(i,0).data(C.Qt.UserRole)
+            target='底盘定量动作' if kind=='base' else self.table.cellWidget(i,1).currentText()
+            row=dict(kind=kind,target=target)
+            if kind!='tts':
+                row['posture']=dict(body_mode=self.table.cellWidget(i,2).currentData(),
+                    lowering_cm=self.table.cellWidget(i,3).value(),
+                    head_pitch_deg=self.table.cellWidget(i,4).angle.value() if self.table.cellWidget(i,4).enable.isChecked() else None)
+            if kind=='base':row['base']=self.table.cellWidget(i,1).value
+            if kind=='action':
+                row['execution_arm']=self.table.cellWidget(i,5).currentData()
+                speed=self.table.cellWidget(i,6).value()
+                if speed is not None:row['action_speed_percent']=speed
+            rows.append(row)
+        return validate(dict(steps=rows))
 
     def load(self, name):
         self.table.setRowCount(0); self.name.setText('' if name == '新建流程' else name)
-        for row in self.library.get(name, {}).get('steps', []): self.add(row['kind'], row['target'],row.get('posture'),row.get('base'))
+        for row in self.library.get(name, {}).get('steps', []): self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'))
 
     def remove(self):
         if self.table.currentRow() >= 0: self.table.removeRow(self.table.currentRow())
@@ -152,7 +191,7 @@ class FlowDialog(Q.QDialog):
         try: rows = self.record()['steps']
         except ValueError: return
         rows[i], rows[j] = rows[j], rows[i]; self.table.setRowCount(0)
-        for row in rows: self.add(row['kind'], row['target'],row.get('posture'),row.get('base'))
+        for row in rows: self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'))
         self.table.selectRow(j)
 
     def save(self):
@@ -169,6 +208,20 @@ class FlowDialog(Q.QDialog):
         name = self.names.currentText()
         if name in self.library and Q.QMessageBox.question(self, '删除流程', '删除“'+name+'”？', defaultButton=Q.QMessageBox.No) == Q.QMessageBox.Yes:
             del self.library[name]; atomic_json(self.path, self.library); self.names.removeItem(self.names.currentIndex())
+
+    def preview_voice(self):
+        row=self.table.currentRow()
+        if row<0 or self.table.item(row,0).data(C.Qt.UserRole)!='tts':
+            Q.QMessageBox.information(self,'试听语音','先选中一条语音播报步骤，再点击试听。');return
+        if self.owner.workflow.active:return
+        from .task_speech import TaskSpeech
+        if not hasattr(self,'voice_preview'):
+            self.voice_preview=TaskSpeech(self.owner)
+            self.voice_preview.completed.connect(lambda token,ok,text:self.progress.setText(text))
+        try:
+            self.voice_preview.start('preview',self.table.cellWidget(row,1).currentText())
+            self.progress.setText('正在合成并试听，重复文字使用缓存音频')
+        except Exception as exc:Q.QMessageBox.warning(self,'语音试听',str(exc))
 
     def start(self):
         try: self.owner.workflow.start(self.record())
@@ -188,6 +241,8 @@ class Workflow(C.QObject):
         owner.studio.completed.connect(self.action_done)
         from .base_sequence_ui import BaseRunner
         self.base=BaseRunner(owner);self.base.completed.connect(self.base_done)
+        from .task_speech import TaskSpeech
+        self.speech=TaskSpeech(owner);self.speech.completed.connect(self.speech_done)
 
     @property
     def active(self): return bool(self.cursor and self.cursor.active)
@@ -199,6 +254,7 @@ class Workflow(C.QObject):
 
     def stopped(self,reason):
         if not self.active:return
+        if hasattr(self,'speech'):self.speech.stop()
         self.failed_phase=self.phase;self.cursor.stop(reason);self.phase=''
 
     def retry_current(self):
@@ -209,8 +265,8 @@ class Workflow(C.QObject):
             if (o.busy or o.motion or o.cancel_pending or o.demo_active or o.placement_active
                     or o.navigation.inflight or o.studio.moving() or self.base.moving()):
                 raise ValueError('请等待前一次操作完全停止、后台就绪后再重试')
-            require_perception(o, {'steps':self.cursor.record['steps'][self.cursor.index:]})
             row=self.cursor.step;kind=row['kind'];scan_only=False
+            require_perception(o, {'steps':[row]})
             if kind=='navigate':
                 data=o.navigation.data
                 if (time.time()-data.get('snapshot_time',0)>2 or not data.get('ready') or not data.get('pose')
@@ -221,7 +277,7 @@ class Workflow(C.QObject):
                 path=o.run/'prepare_result.json'
                 prepared=json.loads(path.read_text('utf-8')) if path.exists() else {}
                 scan_only=self.failed_phase in ('scan','plan','confirm') and prepared.get('status')=='prepared'
-                detail=('重新识别并规划；'+('规划通过即自动抓取' if o.auto_grasp.isChecked() else '等待您确认抓取')+'，不重复复位。') if scan_only else '将重新复位并张开夹爪，再识别规划；请先确认双夹爪空载，未夹住物品。'
+                detail='重新识别并规划；规划通过即自动抓取，不重复复位。' if scan_only else '将重新复位并张开夹爪，再识别规划；请先确认双夹爪空载，未夹住物品。'
                 detail+=' 请确认双爪已空载；确认后清理旧持物记录。'
             elif kind=='place':
                 from .placement_request import held_grasp
@@ -259,6 +315,7 @@ class Workflow(C.QObject):
         auto=getattr(o,'automatic',None)
         if auto and auto.active and not (confirmed and auto.launching): raise ValueError('自动任务正在运行')
         if o.cancel_pending: raise ValueError('正在停止，请等待完成')
+        if getattr(o,'parallel_prepare',None) is not None:raise ValueError('上一准备进程正在退出')
         if self.active or o.busy or o.motion or o.demo_active or o.placement_active or o.navigation.inflight or self.base.moving() or o.studio.moving(): raise ValueError('当前操作未结束')
         record = validate(record); require_perception(o, record)
         actions = deepcopy(actions_snapshot) if actions_snapshot is not None else o.studio.records()
@@ -279,7 +336,7 @@ class Workflow(C.QObject):
         text = '\n'.join(f'{i+1}. {KINDS[r["kind"]]} · {r["target"]}'+(' · 含身体/头部调姿' if r.get('posture') else '') for i,r in enumerate(record['steps']))
         from .base_sequence import summary
         text+=''.join('\n底盘：'+summary(r['base']) for r in record['steps'] if r['kind']=='base')
-        grasp_mode='已勾选自动执行抓取，规划通过后立即抓取，无需逐次确认。' if o.auto_grasp.isChecked() else '抓取先预览再确认。'
+        grasp_mode='本次任务启动后，规划通过即自动抓取；每次抓取步骤会在识别期间保持式使能并张开双爪，请确保双手空载。放置和示教动作保持夹持。'
         entry=('新任务将从抓取开始，请确认双爪空载；确认后清理上次独立测试的持物记录。' if starts_with_grasp(record) else '将按编排执行，保留现有持物信息供放置或动作使用。')
         if not confirmed and Q.QMessageBox.question(o, '确认任务流程', text+'\n\n将自动执行导航、放置和示教动作（包括腰腿与夹爪）。'+entry+grasp_mode+'\n示教动作没有门阻力检测，请确认现场与示教时一致、全程看护并准备实体急停。', defaultButton=Q.QMessageBox.No) != Q.QMessageBox.Yes: return
         # 与自动任务入口一致：已确认空载的新任务不继承独立抓取测试的状态。
@@ -298,11 +355,13 @@ class Workflow(C.QObject):
         if not self.active: return
         o = self.owner; row = self.cursor.step; self.phase = row['kind']; self.plan_id = None
         self.posture_resume=None;self.nav_arrived=False;self.nav_posture_done=not bool(row.get('posture'));self.nav_posture_started=False
-        o.flow_label.setText(f'任务 {self.cursor.index+1}/{len(self.cursor.record["steps"])} · {KINDS[row["kind"]]} · {row["target"]}')
+        o.flow_label.setText(f'任务 {self.cursor.index+1}/{len(self.cursor.record["steps"])} · {KINDS[row["kind"]]} · {row["target"]}'+({'left':' · 左手镜像执行','right':' · 右手镜像执行'}.get(row.get('execution_arm'),'')))
         try:
             require_perception(o, {'steps':[row]})
             if row['kind'] in ('base','grasp','place'):o.studio.release()
-            if row['kind']=='base':
+            if row['kind']=='tts':
+                self.speech.start(self.cursor.token,row['target'])
+            elif row['kind']=='base':
                 if not row['base']['enabled']:self.advance();return
                 self.adjust_posture(self.start_base)
             elif row['kind']=='navigate':
@@ -356,8 +415,16 @@ class Workflow(C.QObject):
 
     def start_fixed_action(self):
         if getattr(self.owner,'automatic',None) and defer_call(self.owner,self.start_fixed_action):return
-        self.phase='action';self.owner.studio.execute(self.cursor.token,deepcopy(self.actions[self.cursor.step['target']]),
+        from .action_speed import apply
+        record=apply(self.actions[self.cursor.step['target']],self.cursor.step.get('action_speed_percent'))
+        if self.cursor.step.get('execution_arm','original')!='original':record['retarget_arm']=self.cursor.step['execution_arm']
+        self.phase='action';self.owner.studio.execute(self.cursor.token,record,
             preserve_grippers_at_entry=self.action_hold_grippers,keep_session=True)
+
+    def speech_done(self,token,success,text):
+        if not self.active or self.phase!='tts' or token!=self.cursor.token:return
+        if success:self.advance()
+        else:self.fail(text)
 
     def start_base(self):
         if getattr(self.owner,'automatic',None) and defer_call(self.owner,self.start_base):return
@@ -376,6 +443,8 @@ class Workflow(C.QObject):
         from .placement_request import new_standalone_request
         from .demo_config import load
         o=self.owner;self.phase='place';o.demo_context=new_standalone_request(o.run,load(o.root))
+        from .parallel_prepare_ui import start
+        start(o,'place')
         o.placement_active=True;o.demo_phase='planning';o.send('standalone_place')
 
     def start_scan(self):
@@ -385,6 +454,8 @@ class Workflow(C.QObject):
         from .task_recognition import task_detection_request
         target=self.cursor.step['target'];request=task_detection_request(target,products)
         self.semantic_target=request['semantic']
+        from .parallel_prepare_ui import start
+        start(o,'grasp')
         self.phase='scan';o.send('scan_task',target=target)
 
     def plan_next_candidate(self):
@@ -435,7 +506,7 @@ class Workflow(C.QObject):
         o=self.owner; kind=data.get('event')
         try:
             if kind in ('error','fatal','vision_unavailable'):
-                if not uses_perception(self.cursor.record):return
+                if not worker_required_now(o):return
                 if kind=='error' and self.phase=='plan' and data.get('candidate_unavailable'):
                     self.candidate_failures.append(f'#{self.candidates[self.candidate_index-1]}: '+data['text'])
                     self.plan_next_candidate();return

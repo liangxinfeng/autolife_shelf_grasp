@@ -42,11 +42,13 @@ def swept_points(product,contact,forward,reach=.018):
     return result
 
 
-def required_opening(product,contact,rotation):
+def required_opening(product,contact,rotation,preopening_margin=.010):
     p=swept_points(product,contact,rotation[:,0])
     if not len(p):return 0.
-    # Two symmetric jaws: an off-centre object needs more than max-min span.
-    return float(2*np.max(np.abs((p-contact)@rotation[:,1]))+.004+.010)
+    # 两指对称：偏心物体必须计入偏心量。保留4mm几何测量余量。
+    # 默认优先选有余量的局部夹点，避免只夹到方盒尖角；验证已选路径时
+    # 传0，只核对真实必需开口，预张开余量由执行器按最大开口调整。
+    return float(2*np.max(np.abs((p-contact)@rotation[:,1]))+.004+preopening_margin)
 
 
 def candidates(product,cfg):

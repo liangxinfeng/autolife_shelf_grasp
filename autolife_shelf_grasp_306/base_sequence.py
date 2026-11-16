@@ -18,7 +18,13 @@ def normalize(value):
     if not isinstance(rows,list) or len(rows)>30 or (enabled and not rows):raise ValueError('启用底盘动作需填写1～30项')
     result=[]
     for row in rows:
-        kind=row.get('kind');amount=float(row.get('amount',0));speed=float(row.get('speed',20. if str(kind).startswith('turn_') else 10.))
+        kind=row.get('kind')
+        if kind=='translate':
+            x=float(row.get('x_cm',float('nan')));y=float(row.get('y_cm',float('nan')));speed=float(row.get('speed',12.))
+            if not np.isfinite([x,y,speed]).all() or not .999999<=math.hypot(x,y)<=15.000001 or not 3<=speed<=12.:
+                raise ValueError('全向补偿总距离1～15cm，合成速度3～12cm/s')
+            result.append(dict(kind=kind,x_cm=x,y_cm=y,speed=speed));continue
+        amount=float(row.get('amount',0));speed=float(row.get('speed',20. if str(kind).startswith('turn_') else 10.))
         if kind not in MOVES or not math.isfinite(amount+speed):raise ValueError('底盘动作参数无效')
         turn=kind.startswith('turn_')
         if not (0.5<=amount<=360. if turn else 1.<=amount<=300.):raise ValueError('转向范围0.5～360°，移动范围1～300cm')
@@ -29,7 +35,10 @@ def normalize(value):
 def summary(value):
     v=normalize(value)
     if not v['enabled']:return '未启用'
-    return ' → '.join(f'{MOVES[r["kind"]]}{r["amount"]:g}'+('°' if r['kind'].startswith('turn_') else 'cm') for r in v['moves'])
+    def label(r):
+        if r['kind']=='translate':return f'同步平移 X{r["x_cm"]:+g}cm / Y{r["y_cm"]:+g}cm'
+        return f'{MOVES[r["kind"]]}{r["amount"]:g}'+('°' if r['kind'].startswith('turn_') else 'cm')
+    return ' → '.join(label(r) for r in v['moves'])
 
 def wrap(x):return math.atan2(math.sin(x),math.cos(x))
 
@@ -57,7 +66,9 @@ class Controller:
             # Keep odometry continuity while excluding an obstacle hold from the motion timeout.
             self.started+=dt;self.velocity[:]=0.;self.stable=None
             return [0.,0.,0.]
-        row=self.config['moves'][self.index];turn=row['kind'].startswith('turn_')
+        row=self.config['moves'][self.index]
+        if row['kind']=='translate':return self._translation(row,pose,twist,now,dt)
+        turn=row['kind'].startswith('turn_')
         speed=row['speed']*(math.pi/180 if turn else .01)
         target=row['amount']*(math.pi/180 if turn else .01)
         sign=-1 if row['kind'] in ('backward','right','turn_right') else 1
@@ -87,6 +98,37 @@ class Controller:
         self.velocity+=np.clip(desired-self.velocity,-limits,limits)
         return self.velocity.tolist()
 
+    def _translation(self,row,pose,twist,now,dt):
+        """单段二维位移共用速度进度；X/Y同时输出，不串行执行两次停车。"""
+        target=np.array([row['x_cm'],row['y_cm']])*.01
+        length=float(np.linalg.norm(target));speed=row['speed']*.01
+        heading=wrap(pose[2]-self.origin[2]);c,s=math.cos(self.origin[2]),math.sin(self.origin[2])
+        local=np.array([[c,s],[-s,c]])@(pose[:2]-self.origin[:2])
+        direction=target/length;along=float(local@direction)
+        cross=float(np.linalg.norm(local-along*direction))
+        if cross>.02 or abs(heading)>.025:raise ValueError('底盘偏离全向补偿直线')
+        if along<-.01 or along>length+.02:raise ValueError('底盘超出全向补偿目标')
+        if now-self.started>length/speed*3+8:raise ValueError('全向补偿超时')
+        error=target-local;remaining=float(np.linalg.norm(error));tol=min(length*.2,.008)
+        if remaining<=tol:
+            self.velocity[:]=0
+            still=math.hypot(*twist[:2])<.015 and abs(twist[2])<.025
+            self.stable=(self.stable if self.stable is not None else now) if still else None
+            if self.stable is not None and now-self.stable>=.3:
+                self.index+=1;self.done=self.index==len(self.config['moves']);self.origin=None
+            return [0.,0.,0.]
+        if along>=length:raise ValueError('全向补偿终点横向偏差过大')
+        self.stable=None
+        magnitude=min(speed,math.sqrt(2*LINEAR_ACCEL*max(0,remaining-tol)),max(.015,remaining*1.5))
+        c,s=math.cos(heading),math.sin(heading)
+        desired=np.array([[c,s],[-s,c]])@error*(magnitude/remaining)
+        change=desired-self.velocity[:2];n=float(np.linalg.norm(change))
+        self.velocity[:2]+=change*min(1.,LINEAR_ACCEL*dt/max(n,1e-12))
+        desired_yaw=max(-.15,min(.15,-heading*1.5))
+        self.velocity[2]+=np.clip(desired_yaw-self.velocity[2],-ANGULAR_ACCEL*dt,ANGULAR_ACCEL*dt)
+        return self.velocity.tolist()
+
+
 def scan_points(ranges,angle_min,increment,range_min,range_max,front):
     r=np.asarray(ranges,float)
     if r.ndim!=1 or len(r)<30 or not math.isfinite(angle_min+increment+range_min+range_max) or increment==0:
@@ -97,10 +139,10 @@ def scan_points(ranges,angle_min,increment,range_min,range_max,front):
     x=r[keep]*np.cos(a[keep]);y=r[keep]*np.sin(a[keep])
     # S3 front scan is level in base axes; rear remains inverted.
     points=np.column_stack([.2634+x,y]) if front else np.column_stack([-.215+x,-y])
-    # Match control_center_navigation/config/navigation_self_filter.yaml:
-    # strictly inside the chassis, NOT the padded 50cm collision footprint.
-    # Discard self hits only; do not convert them to free-space observations.
-    inside=(np.abs(points[:,0])<.18)&(np.abs(points[:,1])<.16)
+    # 345原厂Link_Zero_Point.STL边界：x[-.2675657,.3032678], y±.1779169。
+    # 向内收5mm，只去除实机底盘内部回波；不把碰撞保护外扩量当作自体过滤。
+    # 旧的±18cm范围漏掉后部x≈-.23m处的机身回波，导致一前进就被自身拦停。
+    inside=(points[:,0]>-.2625)&(points[:,0]<.2982)&(np.abs(points[:,1])<.1729)
     return points[~inside]
 
 def clearance(points,velocity):

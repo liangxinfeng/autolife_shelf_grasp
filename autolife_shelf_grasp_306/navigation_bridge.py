@@ -3,8 +3,9 @@ import argparse,json,math,queue,sys,threading,time
 from collections import deque
 from pathlib import Path
 import numpy as np
-from .navigation_logic import (active_map,map_catalog,write_active,waypoint_poses,
-                               GoalProgress,LocalizationGate,NavigationPause,IDLE)
+from .navigation_state import guard_message,may_rearm,LatestImages
+from .navigation_logic import (active_map,map_catalog,write_active,waypoint_poses,parking_chains,
+                               GoalProgress,LocalizationGate,NavigationPause,StationaryHistory,IDLE)
 
 
 _emit_lock=threading.Lock()
@@ -59,9 +60,11 @@ def main():
     latest={};odom=None;odom_stamp=None;nav_bool=False;actions={};names=[];map_meta=None;arm=None
     localization_status={};obstacle_meta=None;obstacle_time=0.
     nav2_readiness={};nav2_readiness_time=0.
-    guard={};guard_time=0.;rearm_future=None;rearm_sent=0.
+    guard={};guard_time=0.;rearm_future=None;rearm_sent=0.;rearm_automatic=False
+    images=LatestImages();last_obstacle_submit=0.
     arm_history=deque(maxlen=160)
-    goal=None;ack=False;arrived=False;stable=None;cancel_reason=None;cancel_sent=False
+    goal=None;ack=False;arrived=False;cancel_reason=None;cancel_sent=False
+    stationary=StationaryHistory()
     pause=NavigationPause();last_pause_tick=time.monotonic()
     sent_at=0.;last_publish=0.;last_list=0.;list_future=None;map_op=None;map_fault=False
     pending=None;pending_kind=None;pending_time=0.;stopping=False;cancel_time=0.
@@ -85,9 +88,7 @@ def main():
             guard=value;guard_time=time.monotonic()
         except (ValueError,TypeError,AttributeError):pass
     def guard_reason():
-        if guard and time.monotonic()-guard_time<2. and not guard.get("navigation_allowed"):
-            return guard.get("detail", "等待导航保护就绪")+"；停稳后点击启动导航重新确认"
-        return ""
+        return guard_message(guard,time.monotonic()-guard_time)
     def navigation_ready():
         return (clients['navigate'].service_is_ready() and time.monotonic()-nav2_readiness_time<3.
                 and nav2_readiness.get('ready') is True)
@@ -109,6 +110,7 @@ def main():
         if stamp==odom_stamp:return
         odom_stamp=stamp;v=m.twist.twist
         odom=(time.monotonic(),math.hypot(v.linear.x,v.linear.y),abs(v.angular.z))
+        stationary.add(*odom)
     def vendor(m):
         nonlocal nav_bool
         nav_bool=m.data
@@ -150,7 +152,7 @@ def main():
             allowed=permitted_navigation_joints(expected,arm[1],goal['step_posture'])
         if any(n not in expected or (n not in allowed and abs(v-expected[n])>(8. if n in ('Joint_Left_Gripper','Joint_Right_Gripper') else 3.)) for n,v in arm[1].items()):
             raise ValueError('手臂或身体已偏离运输姿态，停止导航')
-    def map_received(m):
+    def render_map(m):
         nonlocal map_meta
         try:
             w,h=m.info.width,m.info.height
@@ -163,7 +165,7 @@ def main():
             map_meta=dict(width=w,height=h,resolution=m.info.resolution,x=p.x,y=p.y,
                           yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z)))
         except (ValueError,ZeroDivisionError):pass
-    def obstacle_received(m):
+    def render_obstacle(m):
         nonlocal obstacle_meta,obstacle_time
         if m.header.frame_id!='map' or time.monotonic()-obstacle_time<.5:return
         info=m.metadata;w,h=info.size_x,info.size_y
@@ -177,6 +179,13 @@ def main():
         obstacle_meta=dict(width=w,height=h,resolution=info.resolution,x=p.x,y=p.y,
             yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z)))
         obstacle_time=time.monotonic()
+    def map_received(m):
+        images.submit('map',render_map,m)
+    def obstacle_received(m):
+        nonlocal last_obstacle_submit
+        if time.monotonic()-last_obstacle_submit<.5:return
+        last_obstacle_submit=time.monotonic()
+        images.submit('obstacles',render_obstacle,m)
     qos=QoSProfile(depth=10,durability=DurabilityPolicy.TRANSIENT_LOCAL)
     # A short-lived voice-only preference; expiry restores control-center behavior.
     proximity_publisher=node.create_publisher(Bool,'/grasp306/proximity_voice_enabled',1)
@@ -235,8 +244,16 @@ def main():
                     response=rearm_future.result()
                     if not response.success:raise ValueError(response.message)
                     emit('nav_message',text=response.message+'；旧目标不会自动继续')
-                except Exception as exc:emit('nav_error',text=str(exc))
+                except Exception as exc:
+                    if not rearm_automatic:emit('nav_error',text=str(exc))
                 rearm_future=None
+            if (not stopping and rearm_future is None and now-rearm_sent>=1. and
+                    clients['rearm'].service_is_ready() and
+                    may_rearm(guard,now-guard_time,'grasp-nav-'+run.name,
+                        not (goal or pending or map_op or waiting_navigation or busy()),
+                        still() and stationary.ready(now))):
+                rearm_future=clients['rearm'].call_async(Trigger.Request())
+                rearm_sent=now;rearm_automatic=True
             if stopping and not goal and pending is None and not runtime.starting:break
             try:
                 try:cmd=commands.get_nowait()
@@ -257,8 +274,9 @@ def main():
                     if goal or pending or map_op or busy() or not still():raise ValueError('请停止任务并等待底盘停稳后启动导航')
                     if clients['navigate'].service_is_ready():
                         if guard_reason():
+                            if guard.get('reason_code') not in ('recovery_pending',None):raise ValueError(guard_reason())
                             if rearm_future is not None:raise ValueError('正在确认导航恢复，请稍候')
-                            rearm_future=call('rearm',Trigger.Request());rearm_sent=now
+                            rearm_future=call('rearm',Trigger.Request());rearm_sent=now;rearm_automatic=False
                             emit('nav_message',text='正在确认心跳、旧目标取消和底盘停稳；不自动续跑')
                         else:emit('nav_message',text='已连接现有导航后台，无需重复启动')
                     else:runtime.start(active_map())
@@ -286,7 +304,7 @@ def main():
                     req=NavigateToWaypoint.Request();req.name=cmd['name']
                     goal={**cmd,'step_posture':step_posture,'expected_q':record['q'],'progress':GoalProgress(req.name,node.get_clock().now().nanoseconds/1e9)}
                     waiting_navigation=None
-                    ack=False;arrived=False;stable=None;cancel_reason=None;cancel_sent=False;sent_at=now
+                    ack=False;arrived=False;stationary.reset();cancel_reason=None;cancel_sent=False;sent_at=now
                     try:pending=call('navigate',req)
                     except Exception:goal=None;raise
                     pending_kind='navigate';pending_time=now
@@ -420,8 +438,7 @@ def main():
                 if goal and cancel_sent and pending is None and still() and not any(actions.values()):
                     emit('nav_done',success=False,leg=goal['leg'],run_id=goal['run_id'],text=cancel_reason);goal=None
                 elif goal and ack and arrived and not cancel_reason:
-                    stable=(stable if stable is not None else now) if still() else None
-                    if stable is not None and now-stable>.5:
+                    if still() and stationary.ready(now):
                         emit('nav_done',success=True,leg=goal['leg'],run_id=goal['run_id'],name=goal['name'],map=goal['map'])
                         goal=None
             if goal is None:pause=NavigationPause()
@@ -441,8 +458,9 @@ def main():
                 except Exception:current_map=''
                 current_pose=pose()
                 snapshot=dict(maps=map_catalog(),active_map=current_map,names=names,
-                     library=waypoint_poses(None),waypoints=waypoint_poses(names),pose=current_pose,meta=map_meta,
-                     ready=navigation_ready() and not map_fault and not guard_reason(),guard_reason=guard_reason(),readiness_reason=nav2_readiness.get('reason','等待导航后台'),busy=bool(goal or pending or map_op or waiting_navigation or busy()),
+                     library=waypoint_poses(None),waypoints=waypoint_poses(names),parking_chains=parking_chains(current_map) if current_map else {},pose=current_pose,meta=map_meta,
+                     ready=navigation_ready() and not map_fault and not guard_reason(),guard_reason=guard_reason() if clients['navigate'].service_is_ready() else '',
+                     recovering=bool(guard.get('reason_code')=='recovery_pending'),readiness_reason=nav2_readiness.get('reason','等待导航后台'),busy=bool(goal or pending or map_op or waiting_navigation or busy()),
                      localization_ready=clients['relocalize'].service_is_ready(),localization=localization_status,
                      startup_error=runtime.error,
                      starting=runtime.starting or bool(runtime.started and not runtime.error and not navigation_ready() and not guard_reason() and now-runtime.started<90.),
@@ -455,6 +473,7 @@ def main():
                 from .core import atomic_json
                 atomic_json(run/'navigation_state.json',snapshot)
     finally:
+        images.close()
         if goal and latest.get('active_waypoint') in (None,'',goal['name']) and clients['cancel'].service_is_ready():
             try:
                 future=clients['cancel'].call_async(Trigger.Request())

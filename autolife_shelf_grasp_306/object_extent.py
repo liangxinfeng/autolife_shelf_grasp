@@ -74,4 +74,6 @@ def directional_yaws(product,cfg):
     offsets=sorted(set([0.,float(ideal),*map(float,range(-90,91,5))]),key=lambda v:(abs(v),v))
     for offset in offsets:
         _,side,_=horizontal_basis(cfg['up_torso'],np.deg2rad(base+offset))
-        if projected_width(product,side)+.010<=cfg['gripper_max_width_m']:yield offset
+        # 包络已含4mm测量余量；预张开额外10mm由执行器按最大开口截取，
+        # 不能再作为物品尺寸的硬门槛。
+        if projected_width(product,side)<=cfg['gripper_max_width_m']:yield offset

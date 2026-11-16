@@ -5,6 +5,18 @@ import numpy as np
 from .base_sequence import Controller,normalize,scan_points,clearance,MOVES,ObstacleHold
 from .core import atomic_json
 
+def helper_command():
+    # 与手动底盘窗口一致；不能继承缺少redis等依赖的视觉虚拟环境。
+    return ['/usr/bin/python3','-m','autolife_shelf_grasp_306.chassis','--fixed-sequence']
+
+
+def helper_exit_reason(code,path):
+    try:lines=Path(path).read_text(errors='replace').splitlines()
+    except OSError:lines=[]
+    detail=next((s.strip() for s in reversed(lines) if s.strip()),'未返回详细错误')
+    return f'底盘控制进程退出（代码{code}）：{detail[-300:]}'
+
+
 def request(run,token):
     context=json.loads((run/'task_flow.json').read_text('utf-8'))
     run_id,index=token.split(':');index=int(index)
@@ -14,21 +26,30 @@ def request(run,token):
     return normalize(rows[index].get('base'))
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--run',required=True);p.add_argument('--token',required=True);a=p.parse_args()
-    run=Path(a.run);result=dict(token=a.token,status='failed',completed_moves=0);helper=None;node=None;seq=0
+    p=argparse.ArgumentParser();p.add_argument('--run',required=True);p.add_argument('--token',required=True);p.add_argument('--approach',action='store_true');a=p.parse_args()
+    run=Path(a.run);result=dict(token=a.token,status='failed',completed_moves=0);helper=None;node=None;seq=0;approach=None;helper_log=None;process_started=time.monotonic()
     def send(values):
         nonlocal seq
         seq+=1
         if helper is not None and helper.poll() is None:
             helper.stdin.write(json.dumps(dict(sequence=seq,stamp=time.monotonic(),velocity=values))+'\n');helper.stdin.flush()
     try:
-        config=request(run,a.token);controller=Controller(config)
+        approach_request=None
+        if a.approach:
+            from .mobile_reach import validate_request
+            approach_request=json.loads((run/'mobile_reach_request.json').read_text('utf8'))
+            config=validate_request(approach_request,a.token)
+        else:config=request(run,a.token)
+        controller=Controller(config)
         if not config['enabled']:result['status']='completed';return
         import rclpy
         from rclpy.qos import QoSProfile,ReliabilityPolicy
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import LaserScan
         rclpy.init();node=rclpy.create_node('shelf_base_sequence_306')
+        if a.approach:
+            from .mobile_reach_guard import ApproachWatch
+            approach=ApproachWatch(node,approach_request,run)
         qos=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
         state={'odom':None,'scans':{},'errors':{}};health={'received':0.,'data':None}
         def odom(m):
@@ -51,8 +72,9 @@ def main():
         node.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',odom,qos)
         for front,side in ((True,'front'),(False,'rear')):
             node.create_subscription(LaserScan,f'/topic_gv_{side}_lidar_0_345',lambda m,f=front:scan(m,f),qos)
-        helper=subprocess.Popen([sys.executable,'-m','autolife_shelf_grasp_306.chassis','--fixed-sequence'],stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,stderr=sys.stderr,text=True,bufsize=1)
+        helper_log=(run/'base_helper.log').open('w')
+        helper=subprocess.Popen(helper_command(),stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,stderr=helper_log,text=True,bufsize=1)
         def reports():
             for line in helper.stdout:
                 try:health.update(received=time.monotonic(),data=json.loads(line))
@@ -63,7 +85,7 @@ def main():
             rclpy.spin_once(node,timeout_sec=.01);now=time.monotonic()
             if (run/'stop').exists():raise ValueError('用户停止')
             if not (run/'heartbeat').exists() or time.time()-(run/'heartbeat').stat().st_mtime>1.:raise ValueError('界面心跳中断')
-            if helper.poll() is not None:raise ValueError('底盘控制进程退出')
+            if helper.poll() is not None:raise ValueError(helper_exit_reason(helper.returncode,run/'base_helper.log'))
             ready=(state['odom'] is not None and now-state['odom'][0]<.3 and len(state['scans'])==2 and
                    all(now-s[0]<.5 for s in state['scans'].values()) and now-health['received']<.6)
             if not ready:
@@ -75,6 +97,12 @@ def main():
             if h.get('error'):
                 if not started and now-start<6.:send([0.,0.,0.]);continue
                 raise ValueError(h['error'])
+            if approach is not None:
+                try:approach.check(state['odom'][1],starting=not started)
+                except ValueError:
+                    send([0.,0.,0.])
+                    if started or now-start>6.:raise
+                    continue
             if not started:
                 if not h.get('stationary'):
                     send([0.,0.,0.])
@@ -113,8 +141,11 @@ def main():
                 time.sleep(.04)
             try:helper.stdin.close();helper.wait(timeout=2.)
             except (OSError,subprocess.TimeoutExpired):helper.terminate()
+        if helper_log is not None:helper_log.close()
+        if approach is not None:approach.close()
         if node is not None:node.destroy_node();rclpy.shutdown()
-        atomic_json(run/'base_result.json',result)
+        if a.approach:result['seconds']=round(time.monotonic()-process_started,3)
+        atomic_json(run/('mobile_reach_result.json' if a.approach else 'base_result.json'),result)
         print(json.dumps(dict(event='done',**result),ensure_ascii=False),flush=True)
 
 if __name__=='__main__':main()

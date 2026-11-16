@@ -16,7 +16,7 @@ class TeachingStudio(Q.QWidget):
         if not config.exists():
             from ament_index_python.packages import get_package_share_directory
             config=Path(get_package_share_directory('autolife_shelf_grasp_306'))/'config/grasp.yaml'
-        self.cfg=yaml.safe_load(config.read_text('utf8'))
+        self.cfg=yaml.safe_load(config.read_text('utf8'));self.parallel_action=None
         self.robot_id=int(self.cfg['robot_id']);self.feedback=FeedbackState()
         self.library=TeachingLibrary(owner.root/'data/fixed_actions')
         from .visual_action_client import VisualClient
@@ -40,7 +40,7 @@ class TeachingStudio(Q.QWidget):
         model = Path(get_package_share_directory('control_center_joint_control'))/'urdf/robot_v3_1.urdf'
         self.editor.ensure_model(str(model))
     def records(self):return self.library.records()
-    def moving(self):return self.visual.busy or self.runtime.busy or self.engine.moving()
+    def moving(self):return self.parallel_action is not None or self.visual.busy or self.runtime.busy or self.engine.moving()
     def _acquire(self):
         if self.visual.busy:raise ValueError('物体参照操作正在进行，请完成或停止后再切换控制')
         if self.runtime.busy:raise ValueError('请先停止并关闭遥操，再执行动作串或抓取任务')
@@ -64,21 +64,59 @@ class TeachingStudio(Q.QWidget):
             if record.get('visual_bindings'):
                 if self.engine.moving():raise ValueError('请等待当前动作结束')
                 self.ensure()
+                import uuid
+                prepare_token=uuid.uuid4().hex
+                self.parallel_action=dict(token=token,prepare_token=prepare_token,kwargs=kwargs,body_ready=False,started=False,result=None)
                 def ready(data):
                     try:
+                        pending=self.parallel_action
+                        if pending is None or pending['prepare_token']!=prepare_token:return
                         if data.get('error'):raise ValueError(data['error'])
-                        result=data['result'];self.engine.execute(token,result['record'],visual_source=result['source'],visual_base_anchor=result['base_anchor'],**kwargs)
-                    except Exception as exc:self._completed(token,False,'物体纠偏未执行：'+str(exc))
-                self.visual.request('visual_correct',ready,record=record)
+                        pending['result']=data['result'];self._launch_parallel_action()
+                    except Exception as exc:
+                        self.parallel_action=None;self.engine.stop();self._completed(token,False,'物体纠偏未执行：'+str(exc))
+                self.visual.request('visual_correct',ready,record=record,prepare_token=prepare_token)
             else:self.engine.execute(token,record,**kwargs)
         except Exception:
+            self.parallel_action=None
             if self.engine.bridge is None:self._unlock()
             raise
     def adjust_posture(self,token,setting,*,keep_session=False):
         self._acquire();self.engine.adjust_posture(token,setting,keep_session=keep_session)
     def prepare_posture(self,token):
         self._acquire();self.engine.prepare_posture(token)
+    def _launch_parallel_action(self):
+        pending=self.parallel_action
+        if not pending or not pending['body_ready'] or pending['result'] is None:return
+        self.parallel_action=None;result=pending['result']
+        self.engine.execute(pending['token'],result['record'],visual_source=result['source'],
+            visual_base_anchor=result['base_anchor'],**pending['kwargs'])
+
+    def _poll_parallel_action(self):
+        pending=self.parallel_action
+        if not pending or pending['started'] or (self.owner.run/'task_pause').exists():return
+        path=self.owner.run/'action_prepare_source.json'
+        if not path.exists():return
+        data=json.loads(path.read_text('utf8'))
+        if data.get('token')!=pending['prepare_token']:return
+        pending['started']=True
+        # 过期的并行通知只触发正常重新读取，不用旧姿态使能。
+        source=data['source'] if 0<=time.monotonic()-data['stamp']<.5 else None
+        self.engine.prepare_posture('parallel:'+pending['prepare_token'],refreshed=source)
+
     def _completed(self,token,ok,text):
+        pending=self.parallel_action
+        if pending and not ok and token=='manual-pose-idle':
+            self.parallel_action=None;self.visual.cancel();self.engine.stop();self._completed(pending['token'],False,text);return
+        if pending and token=='parallel:'+pending['prepare_token']:
+            if ok:
+                pending['body_ready']=True
+                try:self._launch_parallel_action()
+                except Exception as exc:
+                    self.parallel_action=None;self.engine.stop();self._completed(pending['token'],False,str(exc))
+            else:
+                self.parallel_action=None;self.visual.cancel();self.engine.stop();self._completed(pending['token'],False,text)
+            return
         if self.engine.bridge is None:self._unlock()
         self.editor.message(text,not ok);self.completed.emit(token,ok,text)
     def release(self):
@@ -86,15 +124,21 @@ class TeachingStudio(Q.QWidget):
         if self.runtime.busy:raise ValueError('请先点击“停止并关闭”，结束遥操后再切换到抓取与任务流程')
         self.engine.release();self._unlock()
     def stop(self):
+        self.parallel_action=None
         self.visual.cancel()
         self.engine.stop()
         if self.runtime.owned or self.runtime.start_pending:self.runtime.stop()
     def tick(self):
+        try:self._poll_parallel_action()
+        except Exception as exc:
+            pending=self.parallel_action;self.stop()
+            if pending:self._completed(pending['token'],False,str(exc))
         if self.monitor:
             import rclpy
             for _ in range(3):rclpy.spin_once(self.monitor,timeout_sec=0.)
         self.editor.tick()
     def shutdown(self):
+        self.parallel_action=None
         self.visual.cancel();self.recorder.close()
         self.editor.persist_draft();self.timer.stop();self.runtime.close();self.engine.shutdown();self._unlock()
         if self.monitor:self.monitor.destroy_node();self.monitor=None

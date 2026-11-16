@@ -289,11 +289,7 @@ class Planner:
 
     def _local_contact_plan(self,source,tcp,center,product,started):
         from .local_contact import candidates
-        from .low_object_grasp import enabled
-        if enabled(product,self.cfg):
-            from .gripper_contact_geometry import contact_tcp
-            old_offset=np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))
-            tcp=contact_tcp(self,np.asarray(tcp)-old_offset)+old_offset
+        from .low_object_grasp import enabled,contact_orientation
         choices=candidates(product,self.cfg)
         if not choices:raise ValueError('整体及前端局部夹取区域都超过夹爪开度，或前端有效插入深度不足')
         toolR=Rotation.from_quat(self.cfg['T_wrist_tool_quat_xyzw']).as_matrix()
@@ -303,8 +299,18 @@ class Planner:
         for choice in choices:
             f,s,u=horizontal_basis(self.cfg['up_torso'],np.deg2rad(self.cfg['approach_yaw_deg']+choice['yaw']))
             from .low_object_grasp import orientation
-            desired,_,_,_,_=orientation(self,source,tcp,center,product,np.deg2rad(self.cfg['approach_yaw_deg']+choice['yaw']),adjust_height=True)
-            offset=desired.T@(-choice['contact']);virtual=np.asarray(tcp)+offset
+            yaw_radians=np.deg2rad(self.cfg['approach_yaw_deg']+choice['yaw'])
+            contact=np.asarray(tcp)-np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))
+            try:
+                if enabled(product,self.cfg):
+                    contact,result,_=contact_orientation(self,source,contact,[0.,0.,0.],np.asarray(center)+choice['contact'],product,yaw_radians)
+                    desired=result[0]
+                else:
+                    contact=np.asarray(tcp)
+                    desired=orientation(self,source,tcp,center,product,yaw_radians,adjust_height=True)[0]
+            except IKFailure as exc:
+                failures.append(dict(stage_index=0,reason=str(exc),contact_mode='front_local'));continue
+            offset=desired.T@(-choice['contact']);virtual=contact+offset
             local={**product,'object_center_offset_wrist':offset.tolist(),
                    'local_contact_torso':choice['contact'].tolist(),
                    'local_required_opening_m':choice['required_opening_m']}
@@ -395,7 +401,7 @@ class Planner:
         local_contact='local_required_opening_m' in product
         if local_contact:width=product['local_required_opening_m']-.010
         elif 'bbox_axes_torso' in product:width=projected_width(product,horizontal_basis(cfg['up_torso'],yaw)[1])
-        if width+.010>cfg['gripper_max_width_m']:raise ValueError('夹取部位过宽，没有足够夹取余量')
+        if width>cfg['gripper_max_width_m']:raise ValueError('实测夹取包络超过夹爪最大开口')
         route_cfg=cfg
         if 'bbox_axes_torso' in product:
             forward=horizontal_basis(cfg['up_torso'],yaw)[0]
@@ -404,11 +410,13 @@ class Planner:
         physical_tcp=np.asarray(tcp)-np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))
         low_contact=enabled(product,cfg)
         if low_contact:
-            from .gripper_contact_geometry import contact_tcp
-            physical_tcp=contact_tcp(self,physical_tcp)
+            from .low_object_grasp import contact_orientation
             product={**product,'object_center_offset_wrist':product.get('object_center_offset_wrist',[0.,0.,0.])}
+            physical_tcp,attitude,contact_fraction=contact_orientation(self,source,physical_tcp,
+                product['object_center_offset_wrist'],center,product,yaw)
             tcp=physical_tcp+np.asarray(product['object_center_offset_wrist'])
-        desired,approach,pitch,low_clearance,height_shift=orientation(self,source,tcp,center,product,yaw,adjust_height=True)
+        else:attitude=orientation(self,source,tcp,center,product,yaw,adjust_height=True)
+        desired,approach,pitch,low_clearance,height_shift=attitude
         if height_shift:
             offset=np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))-desired.T@np.asarray(cfg['up_torso'])*height_shift
             product={**product,'object_center_offset_wrist':offset.tolist()}
@@ -420,7 +428,9 @@ class Planner:
         continuous=cfg.get('fixed_carry_enabled',False) and cfg.get('carry_return_mode')=='continuous_reset'
         if continuous:st=st[:3]  # No mandatory 20 cm withdrawal detour.
         toolR=Rotation.from_quat(cfg['T_wrist_tool_quat_xyzw']).as_matrix()
+        minimum_opening=float(width)
         def check_aperture(q):
+            nonlocal minimum_opening
             if 'bbox_axes_torso' not in product:return
             position,rotation=self.pose(q,tcp)
             if local_contact:
@@ -429,12 +439,14 @@ class Planner:
                 # Before reaching the object, no target material intersects
                 # the jaws; once entering, validate the entire swept prefix.
                 R=rotation@toolR;contact=physical-center
-                required=required_opening(product,contact,R)
+                required=required_opening(product,contact,R,preopening_margin=0.)
+                minimum_opening=max(minimum_opening,required)
                 if required>cfg['gripper_max_width_m']:raise IKFailure(f'局部伸入路径需要{required*1000:.0f}mm开度')
                 return
             if np.linalg.norm(position-center)>projected_width(product,horizontal_basis(cfg['up_torso'],yaw)[0])/2+.03:return
             required=projected_width(product,(rotation@toolR)[:,1])
-            if required+.010>cfg['gripper_max_width_m']:
+            minimum_opening=max(minimum_opening,required)
+            if required>cfg['gripper_max_width_m']:
                 raise IKFailure(f'实测IK夹爪方向需要{required*1000:.0f}mm开度，改试其他方向')
         previous=dict(source);p0,R0=self.pose(source,tcp)
         forward,side,up=horizontal_basis(cfg['up_torso'],yaw)
@@ -456,8 +468,9 @@ class Planner:
                 # when the pregrasp itself is reachable. Solve that endpoint,
                 # then validate a continuous joint-space transit from measured
                 # source; this is not a direct jump to a remote IK seed.
-                seed=dict(source)
-                if profile!='joint_direct':
+                seed=(self.pregrasp_from_contact(source,tcp,center,endpoint,desired,product)
+                      if profile=='joint_from_grasp' else dict(source))
+                if profile not in ('joint_direct','joint_from_grasp'):
                     values=np.deg2rad([source[n] for n in self.names])
                     values[getattr(self,'arm_bias_index',1)]+=np.deg2rad(20. if profile=='joint_elbow_positive' else -20.)
                     seed.update(zip(self.names,np.rad2deg(np.clip(values,*self.bounds))))
@@ -562,6 +575,7 @@ class Planner:
             width=projected_width(product,(self.pose(grasp_q,tcp)[1]@toolR)[:,1])
         return {'source_q':source,'segments':route,'tcp':np.asarray(tcp).tolist(),'center':np.asarray(center).tolist(),
                 'grasp_width_m':float(width),
+                'minimum_opening_m':float(minimum_opening),
                 'product':{k:v for k,v in product.items() if k not in ('features','examples')},
                 'checked_states':checked,'seconds':round(time.monotonic()-started,2),
                 'self_collision_checked':True,'table_height_checked':False,
@@ -571,7 +585,7 @@ class Planner:
                 'approach_pitch_deg':pitch,'low_object_target_clearance_m':low_clearance,
                 'low_object_grasp_raise_m':height_shift,
                 **({'low_object_gripper_model':'full_urdf_parallel_jaw_sweep',
-                    'low_object_finger_contact_fraction':float(cfg.get('low_object_finger_contact_fraction',.80))} if low_contact else {}),
+                    'low_object_finger_contact_fraction':contact_fraction} if low_contact else {}),
                 **({'physical_tcp':physical_tcp.tolist(),'grasp_contact_mode':'low_pitched'} if height_shift or low_contact else {}),
                 'low_object_support':product.get('low_object_support'),
                 'approach_yaw_deg':float(cfg['approach_yaw_deg']+yaw_offset),

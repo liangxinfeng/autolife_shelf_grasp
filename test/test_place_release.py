@@ -44,7 +44,7 @@ def scenario(tmp_path,side='right',floor=16.94130039215088,fault=None,plan_overr
             if fault and now[0]-release_start[0]>.4:raise ValueError(fault)
             if last[0] is not None:q[jaw]+=float(np.clip(max(floor,last[0])-q[jaw],-2.4,2.4))
         return dict(q)
-    env=dict(__name__=executor.__name__,__package__=executor.__package__,observing=False,checked=checked,motion_now=lambda:now[0],arm=side,cfg=cfg,
+    env=dict(prepared=None,__name__=executor.__name__,__package__=executor.__package__,observing=False,checked=checked,motion_now=lambda:now[0],arm=side,cfg=cfg,
         gripper_targets=gripper_targets,node=node,native_motion=True,vendor_place=True,vendor_grasp=False,
         open_tolerance=open_tolerance,Arrival=Arrival,hold_groups=executor.hold_groups,
         atomic_json=lambda p,v:reports.append(v),run=tmp_path,plan=plan)
@@ -84,7 +84,7 @@ def test_release_then_return_with_measured_open_endpoint_residual(tmp_path,side,
 
 @pytest.mark.parametrize('floor',[100.,231.827774])
 def test_real_incomplete_opening_never_starts_return(tmp_path,floor):
-    with pytest.raises(ValueError,match='张开未到位'):scenario(tmp_path,floor=floor)
+    with pytest.raises(ValueError,match='净开口'):scenario(tmp_path,floor=floor)
 
 
 @pytest.mark.parametrize('fault',['用户停止','关节反馈过期','通信离线'])

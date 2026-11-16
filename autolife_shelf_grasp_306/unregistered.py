@@ -41,7 +41,7 @@ def measured_bounds(points,up,camera):
     return local,low,high,basis
 
 
-def visible_surface(local,low,high,basis,camera):
+def visible_surface(local,low,high,basis,camera,measured_support=False):
     """Certify measured extent, not shape class. Never invent hidden thickness."""
     width,depth,height=high-low
     def coverage(fraction):
@@ -64,7 +64,7 @@ def visible_surface(local,low,high,basis,camera):
     singular=np.linalg.svd(local-np.median(local,axis=0),compute_uv=False)
     volume=float(singular[-1]/max(singular[1],1e-9))
     thickness=float(singular[-1]/np.sqrt(len(local)))
-    support=upper_surface_support(local,low,high) if elevation>=45 and volume>=.20 and thickness>=.004 else None
+    support=upper_surface_support(local,low,high) if measured_support or (elevation>=45 and volume>=.20 and thickness>=.004) else None
     if support is not None:
         return dict(surface_evidence='irregular_visible_surface',**support,
                     view_elevation_deg=elevation,surface_volume_ratio=volume)
@@ -115,23 +115,58 @@ def estimate_temporary(frame,mask,T,up,template,cfg,reference=None):
         center,stats=estimate(frame,mask,T,up,product,cfg,observed=(points,pixels,bounds))
         stats['bottle_foreground_ratio']=foreground_ratio
     else:
-        keep=coherent_component(points);points=points[keep];pixels=pixels[keep]
-        local,low,high,basis=oriented_bounds(points,up);width,depth,height=high-low
-        if not (.015<=width<=.35 and .005<=depth<=.35 and .025<=height<=.4):
-            raise DepthQualityError('实测物体过薄、过大或深度混入背景，无法建立可靠夹取几何')
-        evidence=visible_surface(local,low,high,basis,T[:3,3])
-        center=basis@((low+high)*.5)
-        product={**template,'diameter_m':float(width),'height_m':float(height),'depth_m':float(depth),
-            'bbox_axes_torso':basis.tolist(),'bbox_extents_m':[float(width+.004),float(depth+.004),float(height)],
-            'footprint_vertices_torso':footprint_vertices(points,up,center).tolist()}
-        stats=dict(observed_height_mm=float(height*1000),geometry='solid',height_source='observed_object_midpoint',
-            center_source='coherent_oriented_body_bounds',image_cropped=False,points=len(points),
-            depth_component_ratio=float(keep.mean()),**evidence)
-    ys=pixels[:,1];y0,y1=bounds
-    if np.percentile(ys,1)>y0+.12*(y1-y0) or np.percentile(ys,99)<y1-.12*(y1-y0):
-        raise DepthQualityError('未录入物品上下边界深度不足，无法确认中心和放置高度')
+        center,stats,points,pixels=solid_observation(frame,mask,T,up,template,cfg,points,pixels)
+        product=stats['temporary_product']
+    # 瓶身已有专用上下边界校验；普通物体则已通过主体、上表面和
+    # 实测支撑面估计。不能再要求图像分割的上下边缘都有深度：纸巾的
+    # 薄边/皱褶易缺深度，而图像竖直方向也不等于机器人重力方向。
+    # 保留可见边缘覆盖作诊断，不用它否决有效的三维主体抓点。
+    ys=pixels[:,1];y0,y1=bounds;span=max(1,y1-y0)
+    stats['image_vertical_depth_coverage']=[float((v-y0)/span) for v in np.percentile(ys,[1,99])]
     stats.update(temporary_product=product,dimension_source='multi_frame_rgbd')
     return center,stats
+
+
+
+def solid_observation(frame,mask,T,up,template,cfg,points,pixels):
+    """用可见表面确定横向轮廓，用邻近实测支撑面补全被遮挡的底部。
+
+    不再要求表面起伏达到25mm；纸团俯视时的起伏并不是物体总高度。
+    未测到桌面时沿用可见范围，不凭商品名伪造厚度或桌面。
+    """
+    keep=coherent_component(points);points=points[keep];pixels=pixels[keep]
+    local,low,high,basis=oriented_bounds(points,up);width,depth,span=high-low;visible_low=low.copy()
+    if (not np.isfinite([width,depth,span]).all() or width<=0 or depth<=0 or span<0
+            or max(width,depth,span)>.45):
+        raise DepthQualityError(f'物体几何无效或深度混入背景：宽{width*1000:.1f}、深{depth*1000:.1f}、可见高度{span*1000:.1f}毫米')
+    center=basis@((low+high)*.5);height=float(span);surface=None
+    if span<float(cfg.get('low_object_height_m',.10)) and frame.get('depth') is not None:
+        from .low_object_grasp import observe_support
+        observed=observe_support(frame,mask,T,{**template,'height_m':height},center,up,cfg)['low_object_support']
+        if observed['source']=='local_rgbd_plane':
+            normal=np.asarray(observed['normal']);axis=basis[:,2]
+            # 用当前物体中心的水平位置求支撑面高度，兼容腰倾与轻微桌面倾斜。
+            bottom=(observed['offset']-float(normal@(center-axis*(center@axis))))/float(normal@axis)
+            measured=points@normal-observed['offset']
+            noise=max(.001,float(observed['fit_residual_mm'])/1000.)
+            if np.percentile(measured,95)<=3*noise:
+                raise DepthQualityError('分割区域深度与桌面无法区分，尚未测到可供指尖夹取的凸起')
+            if np.percentile(measured,1)<-3*noise:
+                raise DepthQualityError('物体深度穿过实测桌面，请核对分割是否混入其他平面')
+            # 台面只能扩充底部包络，不能向上裁掉已经看到的物体。
+            low[2]=min(low[2],bottom);height=float(high[2]-low[2]);center=basis@((low+high)*.5)
+            surface={**observed,'center':center.tolist()}
+    if not np.isfinite(height) or height<=0:raise DepthQualityError('物体缺少可测量的三维高度')
+    evidence=visible_surface(local,visible_low,high,basis,T[:3,3],measured_support=surface is not None)
+    product={**template,'diameter_m':float(width),'height_m':height,'depth_m':float(depth),
+        'bbox_axes_torso':basis.tolist(),'bbox_extents_m':[float(width+.004),float(depth+.004),height],
+        'footprint_vertices_torso':footprint_vertices(points,up,center).tolist()}
+    stats=dict(observed_height_mm=height*1000,visible_surface_span_mm=float(span*1000),geometry='solid',
+        height_source='measured_support_to_top' if surface else 'observed_object_midpoint',
+        center_source='coherent_oriented_body_bounds',image_cropped=False,points=len(points),
+        depth_component_ratio=float(keep.mean()),temporary_product=product,**evidence)
+    if surface:stats['measured_support']=surface
+    return center,stats,points,pixels
 
 
 def estimate_partial(frame,mask,T,up,template,cfg,reference):

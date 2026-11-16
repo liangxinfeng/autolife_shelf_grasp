@@ -15,8 +15,8 @@ def test_actual_executor_gates_playback_and_reports_exit(monkeypatch,tmp_path,ex
     clock=[100.];monkeypatch.setattr('time.monotonic',lambda:clock[0])
     sessions=[];started=[];receipts=[]
     class Session:
-        def __init__(self,b):self.ready=False;self.closed=False;self.active=True;self.verified=False;self.lower_enabled=set();sessions.append(self)
-        def begin(self):pass
+        def __init__(self,b,**kw):self.ready=False;self.closed=False;self.active=True;self.verified=False;self.lower_enabled=set();sessions.append(self)
+        def begin(self,**kw):self.anchor={}
         def tick(self):pass
         def poll(self):self.verified=self.ready;return self.ready
         def close(self):self.closed=True;return exit_ok

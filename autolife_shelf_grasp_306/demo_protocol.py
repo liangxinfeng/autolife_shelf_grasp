@@ -74,33 +74,40 @@ def validate_place(plan,run):
 
 
 class StationaryBaseGuard:
-    """Acquire the same chassis lease during arm placement; never sends velocity."""
+    """抓取、放置与纠偏共用底盘租约；独立读取里程计，不发送速度。"""
     def __init__(self,node):
         import time,math
-        from nav_msgs.msg import Odometry
-        from rclpy.qos import qos_profile_sensor_data
         from control_center_chassis_guard import ChassisControlLease
-        self.time=time;self.math=math;self.last=None;self.origin=None;self.stamp=None
+        from .base_feedback import BaseOdometryReader
+        self.time=time;self.math=math;self.origin=None;self.reader=None
         self.lease=ChassisControlLease(domain_id='0',robot_id='345')
         if not self.lease.acquire(timeout_sec=0):
-            self.lease.shutdown();raise ValueError('放置时底盘控制权不可用')
-        def callback(m):
-            stamp=(m.header.stamp.sec,m.header.stamp.nanosec)
-            if stamp==self.stamp:return
-            self.stamp=stamp
-            p=m.pose.pose.position;r=m.pose.pose.orientation;v=m.twist.twist
-            self.last=(time.monotonic(),p.x,p.y,math.atan2(2*(r.w*r.z+r.x*r.y),1-2*(r.y*r.y+r.z*r.z)),
-                       math.hypot(v.linear.x,v.linear.y),abs(v.angular.z))
-        self.sub=node.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',callback,qos_profile_sensor_data)
+            self.lease.shutdown();raise ValueError('动作准备时底盘控制权不可用')
+        try:self.reader=BaseOdometryReader(node,'/topic_gv_wheel_odom_0_345')
+        except BaseException:
+            self.lease.release();self.lease.shutdown();raise
+
+    @property
+    def last(self):
+        return self.reader.latest()
 
     def check(self):
         from .demo_config import wrap
-        if not self.lease.held:raise ValueError('放置时底盘控制权丢失')
-        if self.last is None or self.time.monotonic()-self.last[0]>.3:raise ValueError('放置时底盘反馈过期')
-        if not all(self.math.isfinite(v) for v in self.last):raise ValueError('底盘反馈无效')
-        if self.last[4]>.015 or self.last[5]>.025:raise ValueError('放置时底盘未停稳')
-        if self.origin is None:self.origin=self.last
-        if self.math.hypot(self.last[1]-self.origin[1],self.last[2]-self.origin[2])>.01 or abs(wrap(self.last[3]-self.origin[3]))>.02:
-            raise ValueError('放置期间底盘位置改变')
+        if not self.lease.held:raise ValueError('动作期间底盘控制权丢失')
+        # 先直接取最新消息，再判断年龄。主节点处理慢不再等于底盘断流。
+        sample=self.last
+        if sample is None or self.time.monotonic()-sample[0]>.3:
+            raise ValueError('动作期间底盘实时反馈中断')
+        age=self.reader.source_age
+        if age is None or not self.math.isfinite(age) or age<-.1 or age+self.time.monotonic()-sample[0]>.3:
+            raise ValueError('底盘里程计时间无效或数据源未更新')
+        if not all(self.math.isfinite(v) for v in sample):raise ValueError('底盘反馈无效')
+        if sample[4]>.015 or sample[5]>.025:raise ValueError('动作期间底盘未停稳')
+        if self.origin is None:self.origin=sample
+        if self.math.hypot(sample[1]-self.origin[1],sample[2]-self.origin[2])>.01 or abs(wrap(sample[3]-self.origin[3]))>.02:
+            raise ValueError('动作期间底盘位置改变')
 
-    def close(self):self.lease.release();self.lease.shutdown()
+    def close(self):
+        try:
+            if self.reader is not None:self.reader.close()
+        finally:self.lease.release();self.lease.shutdown()

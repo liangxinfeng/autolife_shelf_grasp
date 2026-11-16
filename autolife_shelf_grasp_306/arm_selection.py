@@ -93,6 +93,7 @@ class ArmPlannerPool:
         self.base=copy.deepcopy(cfg);self.calibration=calibration;self.fk=fk;self.factory=factory
         self.planners={};self.attempts=[];self.diagnostics=[];self.native_planners={};self.place_planners={}
         self.calibration_profiles=calibration_profiles
+        self.warm_attempted=set()
 
     def close(self):
         for _,planner in self.native_planners.values():planner.close()
@@ -121,11 +122,87 @@ class ArmPlannerPool:
         planner=self.planners[side];planner.cfg=copy.deepcopy(cfg)
         return planner
 
-    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None):
-        from .core import corrected_target
+    def arm_config(self,side,current_cfg):
+        """预加载与正式规划共用配置；动态复位/补偿始终取本次值。"""
         from .target_offsets import checked_profiles
         profiles=(checked_profiles(current_cfg['target_offsets_by_arm_torso_mm'])
                   if 'target_offsets_by_arm_torso_mm' in current_cfg else None)
+        profile_cfg,profile_data=(self.base,self.calibration)
+        if self.calibration_profiles is not None:
+            profile_cfg,profile_data,_=self.calibration_profiles.for_arm(side)
+        # 标定快照只提供几何信息，不能把启动时的旧复位目标带回来。
+        # 同时删除已取消的引用，避免沿用上一次规划的保存姿态。
+        profile_cfg=copy.deepcopy(profile_cfg)
+        for key in ('initial_pose_deg','workspace_reset_joints','workspace_reset_path',
+                    'workspace_reset_sha256','workspace_pose_speed_percent','grasp_speed_percent'):
+            profile_cfg.pop(key,None)
+            if key in current_cfg:profile_cfg[key]=copy.deepcopy(current_cfg[key])
+        config,tcp=tool_geometry(profile_cfg,profile_data,self.fk,side)
+        if self.calibration_profiles is not None:
+            config['tool_geometry'].update(camera_source=config['tool_geometry'].get('camera_source','arm_calibration_profile'),
+                calibration_profile=config['calibration_profile'])
+        if profiles is not None:
+            config['target_offset_torso_mm']=list(profiles[side])
+            config['target_offsets_by_arm_torso_mm']=copy.deepcopy(profiles)
+        config['up_torso']=list(current_cfg['up_torso'])
+        if 'semantic_prompt_overrides' in current_cfg:
+            config['semantic_prompt_overrides']=copy.deepcopy(current_cfg['semantic_prompt_overrides'])
+        return config,tcp
+
+    def native_planner(self,config,context):
+        side=arm_name(config['arm'])
+        from .vendor_grasp_planning import VendorGraspPlanner
+        from .planner_cache import cache_key
+        key=cache_key(config);cached=self.native_planners.get(side)
+        if cached is None or cached[0]!=key:
+            if cached:cached[1].close()
+            planner=VendorGraspPlanner(config,context=context)
+            self.native_planners[side]=(key,planner)
+        else:
+            planner=cached[1];planner.cfg=copy.deepcopy(config);planner.context=context
+        from .planner_cache import transfer_idle_solver
+        transfer_idle_solver(planner,self.place_planners.get(side),key)
+        return planner
+
+    def warm_next(self,current_cfg,stopped=lambda:False):
+        """空闲时每次只预加载一侧纯IK；有新请求立即取消，不访问硬件。
+
+        不生成路径、不保存关节起点。正式规划仍重新读取姿态、配置固定
+        关节并核对FK；预加载失败不阻止任务，正式请求会正常重新加载。
+        """
+        if self.base.get('grasp_backend')!='vendor_ik_trajectory':return None
+        order=(self.base.get('arm','left'),)
+        if self.base.get('auto_arm_selection',True):order+=('right' if order[0]=='left' else 'left',)
+        side=next((v for v in order if v not in self.warm_attempted),None)
+        if side is None:return None
+        from .planning_control import PlanningControl,PlanningCancelled
+        from .vendor_ik_process import VendorIKProcess
+        from .vendor_grasp_planning import BASE
+        from autolife_handeye_calibration_306.core import BODY
+        from autolife_handeye_calibration_306.verification_core import wrist_frame
+        import time
+        start=time.monotonic();planner=None
+        try:
+            context=PlanningControl(stopped,timeout_sec=20.)
+            context.checkpoint()
+            config,_=self.arm_config(side,current_cfg)
+            planner=self.native_planner(config,context)
+            context.checkpoint()
+            if planner.solver is None:
+                planner.solver=VendorIKProcess(config,config['urdf_path'],BASE,wrist_frame(config),
+                    {n:0. for n in BODY[:2]},checkpoint=context.checkpoint)
+            self.warm_attempted.add(side)
+            return dict(arm=side,status='ready',seconds=time.monotonic()-start)
+        except PlanningCancelled:
+            if planner is not None:planner.close()
+            return None
+        except Exception as exc:
+            if planner is not None:planner.close()
+            self.warm_attempted.add(side)
+            return dict(arm=side,status='deferred',reason=str(exc),seconds=time.monotonic()-start)
+
+    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None):
+        from .core import corrected_target
         self.attempts=[];self.diagnostics=[]
         from .planning_control import PlanningControl
         context=PlanningControl(stopped,on_status) if self.base.get('grasp_backend')=='vendor_ik_trajectory' else None
@@ -134,38 +211,9 @@ class ArmPlannerPool:
             if stopped():raise ValueError('用户停止')
             label='左手' if side=='left' else '右手'
             on_status('自动选手：检查'+label+'抓取与收回路径…')
-            profile_cfg,profile_data=(self.base,self.calibration)
-            if self.calibration_profiles is not None:
-                profile_cfg,profile_data,_=self.calibration_profiles.for_arm(side)
-            # 标定快照只提供几何信息，不能把启动时的旧复位目标带回来。
-            # 同时删除已取消的引用，避免沿用上一次规划的保存姿态。
-            profile_cfg=copy.deepcopy(profile_cfg)
-            for key in ('initial_pose_deg','workspace_reset_joints','workspace_reset_path',
-                        'workspace_reset_sha256','workspace_pose_speed_percent','grasp_speed_percent'):
-                profile_cfg.pop(key,None)
-                if key in current_cfg:profile_cfg[key]=copy.deepcopy(current_cfg[key])
-            config,tcp=tool_geometry(profile_cfg,profile_data,self.fk,side)
-            if self.calibration_profiles is not None:
-                config['tool_geometry'].update(camera_source=config['tool_geometry'].get('camera_source','arm_calibration_profile'),
-                    calibration_profile=config['calibration_profile'])
-            if profiles is not None:
-                config['target_offset_torso_mm']=list(profiles[side])
-                config['target_offsets_by_arm_torso_mm']=copy.deepcopy(profiles)
-            config['up_torso']=list(current_cfg['up_torso'])
-            if 'semantic_prompt_overrides' in current_cfg:
-                config['semantic_prompt_overrides']=copy.deepcopy(current_cfg['semantic_prompt_overrides'])
+            config,tcp=self.arm_config(side,current_cfg)
             if config.get('grasp_backend') == 'vendor_ik_trajectory':
-                from .vendor_grasp_planning import VendorGraspPlanner
-                from .planner_cache import cache_key
-                key=cache_key(config);cached=self.native_planners.get(side)
-                if cached is None or cached[0]!=key:
-                    if cached:cached[1].close()
-                    planner=VendorGraspPlanner(config,context=context)
-                    self.native_planners[side]=(key,planner)
-                else:
-                    planner=cached[1];planner.cfg=copy.deepcopy(config);planner.context=context
-                from .planner_cache import transfer_idle_solver
-                transfer_idle_solver(planner,self.place_planners.get(side),key)
+                planner=self.native_planner(config,context)
             else:
                 planner=self.for_config(config)
             try:

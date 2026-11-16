@@ -46,6 +46,9 @@ class AutomaticTaskPage(Q.QWidget):
         for button in (self.single, self.loop, self.show_button): row.addWidget(button)
         layout.addLayout(row)
         self.pause_button=Q.QPushButton('暂停任务');self.pause_button.clicked.connect(self.toggle_pause);layout.addWidget(self.pause_button)
+        self.continue_button=Q.QPushButton('手动继续当前任务');layout.addWidget(self.continue_button)
+        self.continue_button.clicked.connect(self.continue_task)
+        self.continue_button.setToolTip('从失败步骤重试并完成本轮剩余步骤，不重新启动自动循环。')
         self.stop_button = Q.QPushButton('紧急停止任务'); self.stop_button.setObjectName('stop')
         self.stop_button.setMinimumHeight(54); self.stop_button.clicked.connect(self.stop); layout.addWidget(self.stop_button)
         note = Q.QLabel('含视觉抓取的任务从空载开始，并自动复位准备；纯动作/导航任务直接按步骤执行。异常停止循环。\n关闭 Logo 窗口会停止任务；Esc 仅退出全屏。危险时使用实体急停。')
@@ -156,6 +159,13 @@ class AutomaticTaskPage(Q.QWidget):
     def stop(self):
         self.owner.stop_motion(reason='停止自动任务', source='automatic_task')
 
+    def continue_task(self):
+        if self.active or not self.available() or not self.owner.workflow.retry_available:return
+        # 自动循环已停止：显式接回本轮快照，避免重跑已完成步骤或意外开启下一轮。
+        self.owner.module_tabs.setCurrentWidget(self.owner.grasp_page)
+        self.owner.workflow.retry_current()
+        self.update_view()
+
     def tick(self):
         if self.active and not self.paused and self.phase == 'waiting' and time.monotonic() >= self.deadline:
             if self.available():
@@ -184,6 +194,7 @@ class AutomaticTaskPage(Q.QWidget):
         self.single.setEnabled(not self.active and ready and bool(self.names.count()))
         self.loop.setEnabled(self.single.isEnabled())
         self.pause_button.setEnabled(self.active)
+        self.continue_button.setEnabled(not self.active and ready and self.owner.workflow.retry_available)
         self.pause_button.setText('继续任务' if self.paused else '暂停任务')
         if self.phase == 'preparing':text='检查复位状态 · 未准备则自动复位并张开夹爪'
         elif self.phase == 'running':
@@ -239,7 +250,7 @@ class AutomaticTaskPage(Q.QWidget):
         self.update_view()
 
     def defer_worker_event(self,data):
-        if self.active and self.paused and data.get('event') in ('scene','reset_planned','planned','observe_planned','place_planned','auto_prepared'):
+        if self.active and self.paused and data.get('event') in ('scene','reset_planned','planned','observe_planned','place_planned','auto_prepared','base_reposition'):
             cursor=self.owner.workflow.cursor
             token=cursor.token if cursor and cursor.active else None
             self.deferred_event=(deepcopy(data),deepcopy(self.owner.last_worker_request),token)

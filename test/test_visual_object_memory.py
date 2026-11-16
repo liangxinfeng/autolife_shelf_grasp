@@ -47,21 +47,21 @@ def test_appearance_only_supplement_never_supplies_metric_pose():
     assert 'camera_pose' not in match[1]
 
 
-def test_dino_path_does_not_require_full_scene_sift(monkeypatch):
+def test_bound_path_does_not_embed_whole_object_or_require_full_scene_sift(monkeypatch):
     from autolife_shelf_grasp_306.visual_action_worker import VisualActions
-    import autolife_shelf_grasp_306.visual_registration as registration
-    monkeypatch.setattr(registration,'features',lambda *a,**k:pytest.fail('No full scene SIFT'))
-    worker=VisualActions.__new__(VisualActions);worker.cfg={};worker.perception=SimpleNamespace(embed=lambda x:x)
-    worker.store=SimpleNamespace(views=lambda ident:[])
-    worker.appearance_memory=SimpleNamespace(recognize=lambda *a:({'mask':np.ones((4,4))},{'recognition_method':'dinov2_object'}))
-    worker.locate_mask=lambda *a:('located',a[-1])
+    worker=VisualActions.__new__(VisualActions);worker.cfg={}
+    worker.perception=SimpleNamespace(segmenter=object(),embed=lambda *a:pytest.fail('Whole appearance gate must not run'))
+    worker.store=SimpleNamespace(views=lambda ident:[({},dict.fromkeys(('depth','image','mask','K','D')))])
+    worker.bound_locator=SimpleNamespace(locate=lambda *a:('located',{'recognition_method':'bound_visible_rgbd'}))
+    worker.locate_mask=lambda *a:None
+    worker.observe_texture=lambda *a:pytest.fail('No full scene SIFT')
     assert worker.observe('root',{},np.eye(4),position_only=True)[0]=='located'
 
 
-def test_ambiguous_identity_never_falls_back_to_one_texture_match():
+def test_ambiguous_binding_never_falls_back_to_one_texture_match():
     from autolife_shelf_grasp_306.visual_action_worker import VisualActions
     def ambiguous(*a):raise AmbiguousObject('two objects')
-    worker=VisualActions.__new__(VisualActions);worker.cfg={};worker.perception=SimpleNamespace(embed=lambda x:x)
-    worker.store=SimpleNamespace(views=lambda ident:[]);worker.appearance_memory=SimpleNamespace(recognize=ambiguous)
-    worker.observe_texture=lambda *a:pytest.fail('Ambiguity bypassed')
+    worker=VisualActions.__new__(VisualActions);worker.cfg={};worker.perception=SimpleNamespace(segmenter=object())
+    worker.store=SimpleNamespace(views=lambda ident:[({},dict.fromkeys(('depth','image','mask','K','D')))]);worker.bound_locator=SimpleNamespace(locate=ambiguous)
+    worker.locate_mask=lambda *a:None;worker.observe_texture=lambda *a:pytest.fail('Ambiguity bypassed')
     with pytest.raises(AmbiguousObject):worker.observe('root',{},np.eye(4))

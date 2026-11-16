@@ -261,18 +261,17 @@ class ActionExecutor(Q.QWidget):
         ready=b._hardware_enabled and b._hardware_ready and b._is_feedback_fresh()
         self.job=dict(token=token,posture=desired,keep_session=keep_session,phase='sync' if ready and self.sync_session else 'feedback',started=time.monotonic())
 
-    def prepare_posture(self,token):
+    def prepare_posture(self,token,refreshed=None):
         """Hold-only enable before navigation; keep this controller for the leg."""
         b=self.ensure()
         if self.moving():raise ValueError('关节编辑动作未结束')
         self.panel.setEnabled(False);b.outcome=None
-        self.job=dict(token=token,prepare_only=True,phase='feedback',started=time.monotonic())
+        self.job=dict(token=token,prepare_only=True,phase='feedback',started=time.monotonic(),refreshed=refreshed)
 
     def _close_visual_base(self):
         guard=getattr(self,'visual_base_guard',None)
         if guard:
             self.visual_base_guard=None;guard.close()
-            if self.bridge:self.bridge.destroy_subscription(guard.sub)
 
     def _close_sync(self):
         if self.bridge:self.bridge.teaching_sync_verified=False
@@ -367,6 +366,30 @@ class ActionExecutor(Q.QWidget):
             from std_msgs.msg import String
             if j['phase'] == 'feedback':
                 if not b._is_feedback_fresh(): return
+                if j.get('record',{}).get('retarget_arm'):
+                    if 'retarget_future' not in j:
+                        from concurrent.futures import ThreadPoolExecutor
+                        from .action_retarget import prepare
+                        if not hasattr(self,'retarget_pool'):self.retarget_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='action-mirror')
+                        j['retarget_source']=dict(b._current)
+                        j['retarget_future']=self.retarget_pool.submit(prepare,deepcopy(j['record']),j['retarget_source'],
+                            dict(self.owner.studio.cfg),self.owner.root/'data/fixed_actions')
+                        return
+                    if not j['retarget_future'].done():return
+                    if any(abs(b._current[n]-v)>(2. if 'Gripper' in n else .5) for n,v in j['retarget_source'].items()):
+                        raise ValueError('镜像规划期间姿态改变，请保持停止后重试')
+                    j['record']=j['retarget_future'].result()
+                # 读取真实起点后，一边等待原厂保持使能，一边计算动作轨迹。
+                # 只有两者都完成才进入 sync 执行分支，不重复创建控制会话。
+                from .pose_manual_session import ManualHoldSession
+                if not j.get('session_started'):
+                    if not (getattr(self,'manual_session',False) and self.sync_session and self.sync_session.active):
+                        self.sync_exit_ok=True
+                        self.sync_session=ManualHoldSession(b,preserve_gripper_targets=True)
+                        self.sync_session.begin(refreshed=j.get('refreshed'))
+                    j['session_started']=True
+                if not getattr(self.sync_session,'verified',False):self.sync_session.poll()
+                if not getattr(self.sync_session,'verified',False) and self.sync_session.anchor is None:return
                 if 'trajectory' in j.get('record',{}):
                     if 'plan_future' not in j:
                         from concurrent.futures import ThreadPoolExecutor
@@ -381,13 +404,7 @@ class ActionExecutor(Q.QWidget):
                     j['prepared']=j['plan_future'].result()
                     if any(abs(b._current[n]-v)>1. for n,v in j['plan_entry'].items()):
                         raise ValueError('轨迹准备期间机器人姿态发生变化，请停稳后重试')
-                from .pose_manual_session import ManualHoldSession
-                if getattr(self,'manual_session',False) and self.sync_session and self.sync_session.active:
-                    self.sync_session.tick();j['phase']='sync'
-                else:
-                    self.sync_exit_ok=True;self.sync_session=ManualHoldSession(b,**({'preserve_gripper_targets':True} if getattr(self,'gripper_targets',{}) else {}));self.sync_session.begin()
-                    j['phase']='sync'
-                b._event('复用或单次取得原厂保持会话，不重复逐组使能')
+                j['phase']='sync'
             elif j['phase'] in ('enable','sync'):
                 if not b._hardware_enabled: raise ValueError(b._last_event)
                 if j['phase']=='sync':

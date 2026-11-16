@@ -187,6 +187,8 @@ class Window(DemoNavigation,Q.QWidget):
         self.pending_plan=None;self.expected_target=None;self.picking_rim=False
         self.catalog_dialog=None;self.chassis_dialog=None
         self.demo_active=False;self.placement_active=False;self.demo_phase=None;self.demo_context=None
+        from .mobile_reach_ui import MobileReach
+        self.mobile_reach=MobileReach(self)
         self.setWindowTitle('云蝶 · 抓取与任务流程')
         available=Q.QApplication.primaryScreen().availableGeometry()
         self.resize(min(1480,available.width()-40),min(900,available.height()-60))
@@ -211,7 +213,7 @@ class Window(DemoNavigation,Q.QWidget):
         self.flow_button=Q.QPushButton('编排任务流程');flow_row.addWidget(self.flow_button)
         self.flow_label=Q.QLabel('导航 → 抓取 → 导航 → 放置 / 示教动作');flow_row.addWidget(self.flow_label,1)
         self.flow_label.setWordWrap(True)
-        self.flow_retry=Q.QPushButton('重试当前步骤');self.flow_retry.setEnabled(False);flow_row.addWidget(self.flow_retry)
+        self.flow_retry=Q.QPushButton('手动继续');self.flow_retry.setEnabled(False);flow_row.addWidget(self.flow_retry)
         self.flow_retry.clicked.connect(lambda:self.workflow.retry_current())
         content=Q.QHBoxLayout();content.setSpacing(18);outer.addLayout(content,1)
         left=Q.QVBoxLayout();content.addLayout(left,3)
@@ -282,6 +284,10 @@ class Window(DemoNavigation,Q.QWidget):
         self.execute.setToolTip('先选择物品并完成规划预览；路径通过检查后可确认抓取。')
         self.execute.clicked.connect(self.start_execution);actions.addWidget(self.execute,1)
         self.place=Q.QPushButton('确认放置');self.place.clicked.connect(self.start_placement);actions.addWidget(self.place)
+        self.mobile_reach_enabled=Q.QCheckBox('超范围目标全向平移补偿');self.mobile_reach_enabled.setChecked(True)
+        self.mobile_reach_enabled.setToolTip('前后/左右同时平移，总距离最多15厘米；预览不移动。执行时保持朝向、双臂与夹持，检查整段通道，到位后重新识别规划。')
+        actions.addWidget(self.mobile_reach_enabled)
+        self.mobile_reach_enabled.toggled.connect(lambda _:self.invalidate_plan())
         self.place.setToolTip('本窗口完成抓取后，识别当前桌面并自动放置；不需要演示导航。请先停稳并确认仍夹着物品。')
         self.stop=Q.QPushButton('停止运动');self.stop.setObjectName('stop');self.stop.clicked.connect(self.stop_motion);actions.addWidget(self.stop)
         self.status=Q.QLabel('加载模型中…');self.status.setWordWrap(True);self.status.setStyleSheet('font-size:13px')
@@ -405,13 +411,15 @@ class Window(DemoNavigation,Q.QWidget):
         self.status.setText('底盘位置已调整，请重新识别物品并规划。');self.controls()
 
     def controls(self):
-        idle=not self.busy and self.motion is None and not self.demo_active and not self.placement_active and not (hasattr(self,'studio') and self.studio.visual.busy)
+        idle=getattr(self,'parallel_prepare',None) is None and not self.busy and self.motion is None and not self.demo_active and not self.placement_active and not (hasattr(self,'studio') and self.studio.visual.busy)
         if hasattr(self,'workflow'):
             idle=idle and not self.workflow.active and not self.workflow.base.moving() and self.module_tabs.currentIndex()==0 and not self.automatic_active()
             self.flow_button.setEnabled(idle)
             self.flow_retry.setEnabled(idle and self.workflow.retry_available and not self.cancel_pending
                 and not self.navigation.inflight and not self.studio.moving())
-            self.flow_retry.setToolTip('只重试失败的当前步骤，重新感知和规划；已完成步骤不重复执行')
+            row=self.workflow.cursor.step if self.workflow.retry_available else None
+            detail=(f'从第{self.workflow.cursor.index+1}步「{row["target"]}」重试，成功后继续剩余步骤。' if row else '')
+            self.flow_retry.setToolTip(detail+'已完成步骤不重复执行；重试使用停止前的任务版本，不使用未启动的编辑。')
             if self.workflow.active:
                 # Recompute after every workflow transition. The planned event
                 # first refreshes controls while phase is still 'plan', then
@@ -425,6 +433,7 @@ class Window(DemoNavigation,Q.QWidget):
                     and bool(plan.get('plan_id')) and plan.get('plan_id')==self.workflow.plan_id
                     and plan.get('target',{}).get('instance_id')==self.selected_id()
                     and not self.blockers and not plan.get('blockers'))
+        idle=idle and not self.mobile_reach.active and self.mobile_reach.proc is None
         if hasattr(self,'navigation'):idle=idle and not self.navigation.inflight
         self.demo.setEnabled(idle and self.ready);self.demo_settings.setEnabled(idle and self.ready)
         self.live_button.setEnabled(idle)
@@ -455,16 +464,36 @@ class Window(DemoNavigation,Q.QWidget):
                 and not self.blockers and not pending.get('blockers'))
         if self.demo.isChecked():
             self.execute.setText('确认演示抓取');self.execute.setEnabled(idle)
+        self.mobile_reach_enabled.setEnabled(idle)
+        self.mobile_reach.controls()
 
     def send(self,action,**values):
+        if action in ('plan','standalone_place','demo_place'):
+            values['mobile_reach']=self.mobile_reach_enabled.isChecked()
         if hasattr(self,'studio') and self.studio.visual.busy:
             self.status.setText('正在记录/计算物体参照，请完成或停止后再操作视觉抓取');return
         if not self.ready:
             self.status.setText('视觉功能不可用：'+self.vision_error+'；预录制动作和航点导航仍可使用。')
             return
         if not self.process:return
+        if action=='plan' and (self.run/'stop').exists():
+            # 新的独立预览不是上一任务的重试队列。仅所有旧执行器退出后
+            # 结束旧取消状态；不能在旧动作或补偿仍运行时抹掉停止指令。
+            clear=(not self.busy and not self.cancel_pending and self.motion is None
+                and getattr(self,'parallel_prepare',None) is None and not self.workflow.active
+                and not self.demo_active and not self.placement_active and not self.automatic_active()
+                and not self.mobile_reach.active and self.mobile_reach.proc is None
+                and not self.workflow.base.moving() and not self.navigation.inflight
+                and not self.studio.moving() and not self.studio.editor.remote_locked()
+                and not values.get('_mobile_done'))
+            if not clear:
+                self.status.setText('上一操作正在停止，请等它结束后重新规划。');return
+            (self.run/'stop').unlink(missing_ok=True)
         if action not in ('point_prepare','segment_point'):self._point_pick=False
         if action=='point_prepare':self._point_pick=True;self.picking_rim=False
+        preparation=getattr(self,'parallel_prepare',None)
+        if preparation is not None and action in ('plan','standalone_place'):
+            values['parallel_prepare_token']=preparation.token
         if action=='plan':
             values['grip_tightening_mm']=self.grip_margin.value()
             values['grasp_speed_percent']=self.grasp_speed.value()
@@ -530,7 +559,18 @@ class Window(DemoNavigation,Q.QWidget):
                 self.busy=False;self.cancel_pending=False;self.status.setText('已取消本次操作，未开始新运动。');self.controls()
             return
         if self.automatic.defer_worker_event(data):return
+        if kind=='base_reposition':self.mobile_reach.offer(data);return
+        self.mobile_reach.worker_event(data)
         if kind=='status':self.status.setText(data['text']);return
+        if kind in ('error','fatal','vision_unavailable') and self.workflow.active:
+            from .task_capabilities import worker_required_now
+            if not worker_required_now(self):
+                # 不清除正在执行的动作、放置状态或持物信息；下一视觉步骤仍核验就绪。
+                if kind in ('fatal','vision_unavailable'):
+                    self.ready=False;self.vision_error=data['text']
+                    self.capability_note.setText('当前步骤继续；视觉暂不可用：'+self.vision_error)
+                self.status.setText('当前步骤不依赖视觉，继续执行；'+data['text'])
+                self.controls();return
         self.busy=False
         if kind=='error':self._point_pick=False
         if 'mode' in data:
@@ -664,7 +704,8 @@ class Window(DemoNavigation,Q.QWidget):
         return bool(getattr(self,'automatic',None) and self.automatic.active)
 
     def automatic_grasp_enabled(self):
-        return self.auto_grasp.isChecked() or (self.automatic_active() and self.workflow.active)
+        # 启动任务已明确授权按顺序执行；独立抓取页仍由原自动执行勾选项决定。
+        return self.auto_grasp.isChecked() or self.workflow.active
 
     def grasp_page_allowed(self):
         return self.module_tabs.currentWidget() is self.grasp_page or (self.module_tabs.currentWidget() is self.automatic and self.automatic_active())
@@ -688,6 +729,7 @@ class Window(DemoNavigation,Q.QWidget):
             self.workflow.fail(self.status.text())
 
     def invalidate_plan(self):
+        if hasattr(self,'mobile_reach') and not self.mobile_reach.active:self.mobile_reach.pending=None
         if hasattr(self,'auto_grasp_gate'):self.auto_grasp_gate.revoke()
         self.pending_plan=None;self.expected_target=None;self.execute.setEnabled(False);self.execute.setText('确认抓取')
 
@@ -761,6 +803,8 @@ class Window(DemoNavigation,Q.QWidget):
         self.status.setText('正在识别当前桌面并规划放置…')
 
     def start_execution(self,checked=False,*,automatic=False):
+        if self.mobile_reach.pending and not self.mobile_reach.active:
+            self.mobile_reach.start();return
         if self.motion:return
         if not automatic:self.auto_grasp_gate.revoke()
         if self.workflow.active:
@@ -803,6 +847,11 @@ class Window(DemoNavigation,Q.QWidget):
                 self.status.setText('当前规划已失效，请重新规划');return
             path=self.run/filename
             extra=['--expected-plan-id',data['plan_id'],'--expected-product-id',data['target']['product_id']]
+        parallel=getattr(self,'parallel_prepare',None)
+        if parallel is not None and not preparing:
+            data=placement if placement is not None else self.pending_plan
+            parallel.submit(path,data['plan_id'],data['product_id'] if placement is not None else data['target']['product_id'])
+            return
         self.preparing=preparing;self.motion=C.QProcess(self);self.motion.finished.connect(self.motion_finished)
         self.motion.errorOccurred.connect(self.motion_error)
         self.motion.setProcessChannelMode(C.QProcess.MergedChannels)
@@ -886,6 +935,7 @@ class Window(DemoNavigation,Q.QWidget):
 
     def stop_motion(self,checked=False,*,reason=None,source='operator'):
         reason=reason or '用户请求停止'
+        if hasattr(self,'mobile_reach'):self.mobile_reach.cancel()
         if hasattr(self,'automatic'):self.automatic.abort(reason)
         from .core import atomic_json
         receipt=dict(time=time.time(),source=source,reason=reason,
@@ -939,11 +989,10 @@ class Window(DemoNavigation,Q.QWidget):
                 self.video.pix=G.QPixmap(str(path));self.preview_stamp=stamp;self.video.update()
 
     def finished(self,*_):
+        from .task_capabilities import worker_required_now
+        required=worker_required_now(self) or self.mobile_reach.active
         if hasattr(self,'studio'):self.studio.visual.fail('视觉后台已退出，纠偏未执行')
-        from .task_capabilities import uses_perception
-        visual_flow=self.workflow.active and uses_perception(self.workflow.cursor.record)
-        visual_auto=self.automatic_active() and uses_perception(self.automatic.record)
-        if self.demo_active or self.placement_active or visual_flow or visual_auto:
+        if required:
             self.stop_motion(reason='识别后台已退出',source='worker_exit')
         self.ready=False;self.busy=False
         self.vision_error=self.vision_error or '识别后台已退出，请重新打开程序恢复视觉功能'
@@ -951,6 +1000,9 @@ class Window(DemoNavigation,Q.QWidget):
         self.controls()
 
     def closeEvent(self,event):
+        if self.mobile_reach.active or self.mobile_reach.proc is not None:
+            self.stop_motion(reason='关闭补偿流程',source='window_close')
+            self.status.setText('正在停止底盘补偿，请停稳后关闭');event.ignore();return
         if self.demo_active or self.placement_active or self.workflow.active or self.automatic_active():
             self.stop_motion(reason='关闭抓取窗口',source='window_close')
         if self.workflow.base.moving():
@@ -959,8 +1011,8 @@ class Window(DemoNavigation,Q.QWidget):
         if self.studio.moving():
             self.studio.stop();self.status.setText('已请求停止动作，请确认停稳后再关闭');event.ignore();return
         if self.chassis_dialog:self.chassis_dialog.shutdown()
-        if self.motion:
-            self.stop_motion();self.status.setText('停止运动后再关闭界面');event.ignore();return
+        if self.motion or getattr(self,'parallel_prepare',None) is not None:
+            self.stop_motion();self.status.setText('停止运动/准备后再关闭界面');event.ignore();return
         if not self.navigation.shutdown():
             self.status.setText('等待本程序的导航取消确认，请停稳后再次关闭');event.ignore();return
         if self.process and self.process.state()!=C.QProcess.NotRunning:
