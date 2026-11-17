@@ -166,11 +166,14 @@ class NativeTrajectoryAdapter:
                                    list(left)+list(right[4:])))}
         if not all(np.isfinite(v) for v in q.values()):
             raise ValueError('原厂轨迹返回了无效目标')
-        for n in BODY[:2]+ARMS['right' if self.side=='left' else 'left']:
+        arms_only=self.plan.get('arms_only_reset') is True
+        if arms_only and self.plan.get('controlled_joints')!=ARMS['left']+ARMS['right']:
+            raise ValueError('双臂复位关节集合无效')
+        for n in (BODY+NECK if arms_only else BODY[:2]+ARMS['right' if self.side=='left' else 'left']):
             if abs(q[n]-self.plan['source_q'][n]) > 1e-6:
                 raise ValueError('原厂插值意外改变固定关节')
         payload = {GROUPS[g]['command_key']: [q[n] for n,*_ in GROUPS[g]['joints']]
-                   for g in ('leg_waist', self.side+'_arm')}
+                   for g in (('left_arm','right_arm') if arms_only else ('leg_waist', self.side+'_arm'))}
         self.node._publish_vendor(self.node._whole_body_pub, payload)
         self.node._last_operator_activity = time.monotonic()
         self.last = q

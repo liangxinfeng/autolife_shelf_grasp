@@ -82,6 +82,18 @@ class MapView(Q.QWidget):
         for name,pose in self.data.get('waypoints',{}).items():
             pt=point(*pose[:2]);p.setPen(G.QColor('#19bacc'));p.setBrush(G.QColor('#19bacc'));p.drawEllipse(pt,3,3)
             p.drawText(pt+C.QPointF(5,-3),name+(' · 停靠链' if name in self.data.get('parking_chains',{}) else ''))
+        proposal=getattr(self,'operation_target',None)
+        if proposal and proposal.get('map')==self.data.get('active_map'):
+            pose=proposal['goal_pose'];pt=point(*pose[:2]);a=pose[2]-meta['yaw']
+            p.setPen(G.QPen(G.QColor('#ffcb66'),2));p.setBrush(C.Qt.NoBrush)
+            p.drawEllipse(pt,9,9);p.drawLine(pt,pt+C.QPointF(math.cos(a)*22,-math.sin(a)*22))
+            p.drawText(pt+C.QPointF(11,-10),'建议操作停靠点')
+            source=proposal.get('source_map_pose');target=proposal.get('target_base')
+            if source and target:
+                c,s=math.cos(source[2]),math.sin(source[2])
+                obj=point(source[0]+c*target[0]-s*target[1],source[1]+s*target[0]+c*target[1])
+                p.setPen(G.QPen(G.QColor('#ff8fb1'),2));p.drawEllipse(obj,5,5)
+                p.drawText(obj+C.QPointF(8,13),'操作目标')
         pose=self.data.get('pose') or self.data.get('pending_pose')
         if pose:
             pending=not self.data.get('pose')
@@ -127,6 +139,7 @@ class NavigationDialog(Q.QDialog):
         data=self.panel.data
         if self.map.data.get('active_map')!=data.get('active_map'):
             self.manual.setChecked(False);self.map.fit()
+        self.map.operation_target=getattr(self.panel.map,'operation_target',None)
         self.map.data=data;self.map.update();self.status.setText(self.panel.info.text())
         pose=data.get('pose');pending=data.get('pending_pose');self.center.setEnabled(bool(pose or pending))
         self.coordinates.setText(f'机器人坐标：X {pose[0]:.3f} m   Y {pose[1]:.3f} m   朝向 {math.degrees(pose[2]):.1f}°' if pose else '机器人坐标：等待有效定位确认')
@@ -233,6 +246,14 @@ class NavigationPanel(Q.QWidget):
             event=data.get('event')
             if event=='nav_snapshot':
                 previous=self.data.get('active_map');self.data=data;self.map.data=data;self.map.update()
+                combo=getattr(self.owner,'operation_chain',None)
+                if combo is not None:
+                    choice=combo.currentData();entries=[('自动：上次到达的停靠链','')]+[(n,n) for n in data.get('parking_chains',{})]
+                    if [(combo.itemText(i),combo.itemData(i)) for i in range(combo.count())]!=entries:
+                        combo.blockSignals(True);combo.clear()
+                        for label,name in entries:combo.addItem(label,name)
+                        combo.setCurrentIndex(max(0,combo.findData(choice)));combo.blockSignals(False)
+                if previous and previous!=data['active_map']:self.last_chain=''
                 self.refill(self.maps,[(('当前 · ' if m['path']==data['active_map'] else '')+m['name'],m['path']) for m in data['maps']],data['active_map'])
                 if previous and previous!=data['active_map']:
                     self.front.clear();self.shelf.clear();self.saved={}
@@ -242,11 +263,17 @@ class NavigationPanel(Q.QWidget):
                 self.info.setText(self.notice if time.monotonic()<self.notice_until else text)
                 self.owner.controls()
             elif event=='nav_started':
+                if self.owner.mobile_reach.navigation_event(data):continue
                 workflow=getattr(self.owner,'workflow',None)
                 if workflow:workflow.navigation_started(data)
             elif event=='nav_done':
-                self.inflight=False;self.owner.navigation_done(data)
+                self.inflight=False
+                if data.get('success'):
+                    self.last_chain=data.get('name','') if data.get('name') in self.data.get('parking_chains',{}) else ''
+                if self.owner.mobile_reach.navigation_event(data):continue
+                self.owner.navigation_done(data)
             elif event=='nav_error':
+                if self.owner.mobile_reach.navigation_event(data):continue
                 self.show_notice(data['text'])
                 workflow=getattr(self.owner,'workflow',None)
                 if workflow and workflow.active and data.get('run_id')==workflow.cursor.run_id:

@@ -27,6 +27,17 @@ from .calibration_profiles import CalibrationProfiles
 from .task_recognition import task_detection_request,infer_scene
 
 
+def reposition_proposal(suggestion,cfg,cmd,ident,camera_to_base):
+    """在产生移位建议的分支封装本帧坐标，不依赖其他请求残留的局部变量。"""
+    transform=np.asarray(camera_to_base,dtype=float)
+    if transform.shape!=(4,4) or not np.isfinite(transform).all():
+        raise ValueError('移位交接缺少有效的本帧相机坐标')
+    proposal=copy.deepcopy(suggestion)
+    proposal.update(request_id=ident,camera_cfg=copy.deepcopy(cfg),camera_to_base=transform.tolist(),
+        resume={k:copy.deepcopy(v) for k,v in cmd.items() if k not in ('parallel_prepare_token','request_id','_mobile_done')})
+    return proposal
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--root',required=True);parser.add_argument('--run',required=True)
     args=parser.parse_args();root=Path(args.root);run=Path(args.run)
@@ -323,12 +334,13 @@ def main():
                             if cfg.get('grasp_backend')=='vendor_ik_trajectory':
                                 planner=arm_pool.for_placement(cfg,lambda:(run/'stop').exists(),
                                     lambda text:emit('status',text=text))
-                                if cmd.get('mobile_reach') and not cmd.get('_mobile_done'):
-                                    from .mobile_reach import place_reposition
-                                    suggestion=place_reposition(planner,q,placement_tcp,grasp,points,table,settings,base_anchor,cloud,
+                                try:plan=planner.plan_place(q,placement_tcp,grasp,points,table,settings)
+                                except ValueError:
+                                    if not cmd.get('mobile_reach') or cmd.get('_mobile_done'):raise
+                                    from .operation_docking import place as operation_place
+                                    suggestion=operation_place(run,cmd,planner,q,placement_tcp,grasp,points,table,settings,base_anchor,
                                         lambda:(run/'stop').exists(),lambda text:emit('status',text=text))
-                                    if suggestion is not None:raise RepositionRequired(suggestion)
-                                plan=planner.plan_place(q,placement_tcp,grasp,points,table,settings)
+                                    raise RepositionRequired(reposition_proposal(suggestion,cfg,cmd,ident,ground@T))
                             else:plan=plan_place(planner,q,placement_tcp,grasp,points,table,settings)
                             diag['timing_seconds']['path_planning']=round(time.monotonic()-planning_started,4)
                         except ValueError as exc:
@@ -503,29 +515,23 @@ def main():
                             reference=json.loads((run/'mobile_reach_request.json').read_text('utf8'))
                             if reference['token']!=cmd['_mobile_done']:raise ValueError('补偿目标已改变')
                             q_now,T_now=transform(frame)
+                            nav_state=json.loads((run/'navigation_state.json').read_text('utf8')) if (run/'navigation_state.json').exists() else {}
+                            if (nav_state.get('ready') and nav_state.get('active_map')==reference.get('map') and nav_state.get('pose') is not None
+                                and 0<=time.time()-nav_state.get('snapshot_time',0)<3):
+                                reference['arrival_map_pose']=nav_state['pose']
                             selected,identity=select_after_move(chosen,fresh,frame,fk.fk('Link_Zero_Point',TORSO,q_now)@T_now,
-                                cfg,reference,robot.base_sample())
+                                cfg,reference,robot.base_sample(),request=task_recognition)
                         else:selected,identity=resolve_selected(chosen,fresh)
                         atomic_json(run/'target_identity.json',identity)
                         if selected is None:raise ValueError(identity['reason'])
+                        if cmd.get('_mobile_done'):
+                            # 连续移位每次使用上次已确认的外观，避免一直匹配首次取景。
+                            scene=frame;items=[selected]
                         # Preserve the selection/reference image coordinates for
                         # enrollment and bag-rim picking. Display flow already
                         # follows the live RGB; fresh masks above are for planning.
                         camera.overlay.rename(overlay_items(items),ident)
-                        # 与任务/常规抓取共用：识别到目标后先判断工作范围，尚未进入多帧几何与路径规划。
-                        if cmd.get('mobile_reach') and not cmd.get('_mobile_done') and cfg.get('grasp_backend')=='vendor_ik_trajectory':
-                            from .mobile_reach import grasp_reposition
-                            from .bottle import object_points
-                            q,T=transform(frame);ground=fk.fk('Link_Zero_Point',TORSO,q)
-                            cfg['up_torso']=(ground[:3,:3].T@np.array([0.,0.,1.])).tolist()
-                            try:target_points,_,_=object_points(frame,selected['mask'],T,cfg)
-                            except DepthQualityError:target_points=np.empty((0,3))  # 粗筛缺深度时交回原多帧链路。
-                            if len(target_points)>=20:
-                                early_center=np.median(target_points,axis=0)
-                                cloud,_,_=object_points(frame,frame['depth']>0,ground@T,cfg)
-                                suggestion=grasp_reposition(arm_pool,q,early_center,selected.get('product') or {},cfg,
-                                    robot.base_sample(),cloud,lambda:(run/'stop').exists(),lambda text:emit('status',text=text))
-                                if suggestion is not None:raise RepositionRequired(suggestion)
+                        # 当前处在可达范围时不改变原规划；几何融合后才生成操作停靠建议。
                         temporary=selected['product'] is None
                         if temporary:
                             selected={**selected,'product':temporary_product(selected,run.name)}
@@ -634,18 +640,50 @@ def main():
                         atomic_json(run/'grasp_input.json',dict(source_q=q,
                             center=center.tolist(),product=planned_product,config={**arm_pool.base,'target_offsets_by_arm_torso_mm':cfg['target_offsets_by_arm_torso_mm']},
                             up_torso=up.tolist(),geometry=geometry,request_id=ident,center_uncorrected=True))
+                        from . import operation_docking
+                        from .planning_control import PlanningTimeout
+                        can_dock=bool(cmd.get('mobile_reach') and cfg.get('grasp_backend')=='vendor_ik_trajectory')
+                        dock_attempted=False
+                        def select_operation_dock():
+                            nonlocal dock_attempted
+                            dock_attempted=True
+                            from .docking_view import observation as view_observation
+                            view=view_observation(fk.fk('Link_Zero_Point',TORSO,q),T,frame)
+                            suggestion=operation_docking.grasp(run,cmd,arm_pool,q,center,planned_product,cfg,
+                                robot.base_sample(),lambda:(run/'stop').exists(),lambda text:emit('status',text=text),observation_for_arm,view=view)
+                            raise RepositionRequired(reposition_proposal(suggestion,cfg,cmd,ident,view['camera_ground']))
+                        # 低物体的实际指腹接触点不同于名义TCP，交给共享朝向预判；
+                        # 不再用名义TCP球在此提前决定移动。
+                        def show_reach(result):
+                            result.update(request_id=ident,source_q=q,target_torso=center.tolist())
+                            if result['status'] in ('reposition_review','outside_workspace'):
+                                text=('快速预判：当前高度和夹取朝向超出腰臂范围，直接检查合适停靠点。' if result['status']=='outside_workspace' else
+                                      '快速预判未确认当前操作点可抓，立即检查更合适的可见停靠点，不等待原地10秒。')
+                                if can_dock:
+                                    try:operation_docking.context(run,cmd)
+                                    except ValueError as exc:
+                                        result['navigation_requirement']=str(exc);text+=' '+str(exc)
+                            else:text='快速预判：关键抓取位姿可达，保持底盘不动，继续检查完整路径。'
+                            atomic_json(run/'reach_precheck.json',result)
+                            emit('status',text=text)
+                            if can_dock and result['status'] in ('reposition_review','outside_workspace'):
+                                select_operation_dock()
                         try:
                             plan,planner,selected_cfg,tcp,center,correction=arm_pool.plan(q,center,planned_product,cfg,
                                 stopped=lambda:(run/'stop').exists(),on_status=lambda text:emit('status',text=text),
-                                observation_for_arm=observation_for_arm)
+                                observation_for_arm=observation_for_arm,on_reach=show_reach,reach_hint=cmd.get('_operation_reach_hint'))
                             cfg.update(selected_cfg)
                             calibration,calibration_sha=profiles.resolve(cfg)
                             _,geometry,selected['product'],T=arm_observations[cfg['arm']]
                             planned_product=plan['product']
                             if cfg.get('calibration_profile',{}).get('test_only'):
                                 emit('status',text='右臂使用本次测试标定（待实物精度验证）')
-                        except ValueError as exc:raise CandidateUnavailable(str(exc)) from exc
-                        finally:atomic_json(run/'grasp_diagnostics.json',dict(arms=arm_pool.attempts,failures=arm_pool.diagnostics))
+                        except (ValueError,PlanningTimeout) as exc:
+                            if can_dock and not dock_attempted:
+                                emit('status',text='原地路径未通过，检查停靠链中的操作余量位置…')
+                                select_operation_dock()
+                            raise CandidateUnavailable(str(exc)) from exc
+                        finally:atomic_json(run/'grasp_diagnostics.json',dict(arms=arm_pool.attempts,failures=arm_pool.diagnostics,reach_precheck=getattr(arm_pool,'reach_diagnostics',[])))
                         geometry.update(correction)
                         atomic_json(root/'data/last_geometry.json',{'center':center.tolist(),'up_torso':up.tolist(),**geometry})
                         atomic_json(run/'grasp_input.json',dict(source_q=q,tcp=tcp.tolist(),
@@ -710,13 +748,16 @@ def main():
                              blockers=execution_blockers(cfg)+([] if not cfg.get('require_reset_before_grasp',True) or plan['prepare_token'] else ['复位尚未成功，请先复位并准备']))
                     else:raise ValueError('未知操作')
                 except RepositionRequired as exc:
-                    proposal=exc.proposal
-                    proposal['request_id']=ident
-                    proposal['camera_cfg']=dict(cfg)
-                    proposal['camera_to_base']=(ground@T).tolist()
-                    proposal['resume']={k:v for k,v in cmd.items() if k not in ('parallel_prepare_token','request_id')}
-                    atomic_json(run/'mobile_reach_proposal.json',proposal)
-                    plan=None;emit('base_reposition',request_id=ident,proposal=proposal)
+                    # 交接故障只结束本次请求，不能沿外层 finally 关闭相机和视觉工作器。
+                    plan=None
+                    try:
+                        proposal=exc.proposal
+                        atomic_json(run/'mobile_reach_proposal.json',proposal)
+                        emit('base_reposition',request_id=ident,proposal=proposal)
+                    except Exception as handoff_error:
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
+                        emit('error',request_id=ident,text='移位交接失败：'+str(handoff_error),candidate_unavailable=False)
                 except Exception as exc:
                     atomic_json(run/'last_error.json',{'action':cmd.get('action'),'request_id':ident,'reason':str(exc),'time':time.time()})
                     plan=None;emit('error',request_id=ident,text=str(exc),

@@ -93,7 +93,7 @@ class ArmPlannerPool:
         self.base=copy.deepcopy(cfg);self.calibration=calibration;self.fk=fk;self.factory=factory
         self.planners={};self.attempts=[];self.diagnostics=[];self.native_planners={};self.place_planners={}
         self.calibration_profiles=calibration_profiles
-        self.warm_attempted=set()
+        self.warm_attempted=set();self.reach_diagnostics=[]
 
     def close(self):
         for _,planner in self.native_planners.values():planner.close()
@@ -162,6 +162,7 @@ class ArmPlannerPool:
             planner=cached[1];planner.cfg=copy.deepcopy(config);planner.context=context
         from .planner_cache import transfer_idle_solver
         transfer_idle_solver(planner,self.place_planners.get(side),key)
+        planner.preferred_grasp_yaw=None  # 预判方向只属于本次姿态与物体，换请求不沿用。
         return planner
 
     def warm_next(self,current_cfg,stopped=lambda:False):
@@ -201,31 +202,54 @@ class ArmPlannerPool:
             self.warm_attempted.add(side)
             return dict(arm=side,status='deferred',reason=str(exc),seconds=time.monotonic()-start)
 
-    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None):
+    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None,on_reach=lambda result:None,reach_hint=None):
         from .core import corrected_target
-        self.attempts=[];self.diagnostics=[]
-        from .planning_control import PlanningControl
-        context=PlanningControl(stopped,on_status) if self.base.get('grasp_backend')=='vendor_ik_trajectory' else None
+        from .planning_control import PlanningControl,PlanningTimeout,PlanningCancelled
+        from .reach_precheck import screen,STATIONARY_SECONDS
+        import time
+        self.attempts=[];self.diagnostics=[];self.reach_diagnostics=[]
+        native=self.base.get('grasp_backend')=='vendor_ik_trajectory'
+        context=PlanningControl(stopped,timeout_sec=STATIONARY_SECONDS) if native else None
         order=rank_arms(self.fk,point,self.base.get('arm','left')) if self.base.get('auto_arm_selection',True) else [self.base['arm']]
-        for side in order:
-            if stopped():raise ValueError('用户停止')
+        if reach_hint:order.sort(key=lambda side:side!=reach_hint.get('arm'))
+        if native:
+            on_status('先检查当前高度、腰臂姿态与夹取方向的可抓范围…')
+            self.reach_diagnostics=screen(self,source,point,product,current_cfg,order,context,on_status,observation_for_arm,reach_hint)
+            preferred={r['arm'] for r in self.reach_diagnostics if r['status']=='key_poses_passed'}
+            outside=len(self.reach_diagnostics)==len(order) and all(r['status']=='outside_workspace' for r in self.reach_diagnostics)
+            on_reach(dict(status='outside_workspace' if outside else 'key_poses_passed' if preferred else 'reposition_review',arms=self.reach_diagnostics,
+                          elapsed_seconds=round(context.clock()-context.started,3),stationary_budget_seconds=STATIONARY_SECONDS))
+            if outside:raise ValueError('快速可达预判：当前身体高度及夹取方向下，双臂均超出工作范围，需要调整停靠位置')
+            order=sorted(order,key=lambda side:side not in preferred)
+            # 先选手、再规划：不能把已经选中的手臂在收回阶段按半份预算截断。
+            # 快速预判可比较双臂，但完整路径只尝试本次选中的一只手。
+            order=order[:1]
+        for index,side in enumerate(order):
+            if stopped():raise PlanningCancelled('用户已停止规划，未生成可执行路径')
             label='左手' if side=='left' else '右手'
-            on_status('自动选手：检查'+label+'抓取与收回路径…')
+            on_status('已选择'+label+'，规划完整抓取与收回路径（原地总预算10秒，不中途换手）…' if native else '自动选手：检查'+label+'抓取与收回路径…')
             config,tcp=self.arm_config(side,current_cfg)
-            if config.get('grasp_backend') == 'vendor_ik_trajectory':
+            if native:
+                context.checkpoint()
+                # 直接使用整次请求的同一截止时间，预判耗时也在其中；不重置或延长10秒。
+                context.on_status=on_status
                 planner=self.native_planner(config,context)
-            else:
-                planner=self.for_config(config)
+                planner.preferred_grasp_yaw=next((r['yaw_offset_deg'] for r in self.reach_diagnostics
+                    if r['arm']==side and r['status']=='key_poses_passed'),None)
+            else:planner=self.for_config(config)
+            began=time.monotonic()
             try:
                 arm_point,arm_product=(observation_for_arm(side,config) if observation_for_arm else (point,product))
                 center,correction=corrected_target(arm_point,config.get('target_offset_torso_mm',[0.,0.,0.]))
                 plan=planner.plan(source,tcp,center,arm_product)
-            except ValueError as exc:
-                self.attempts.append({'arm':side,'status':'unavailable','reason':str(exc)})
-                self.diagnostics.append({'arm':side,'failures':getattr(planner,'candidate_failures',[])})
+                if context:context.checkpoint()
+            except (ValueError,PlanningTimeout) as exc:
+                self.attempts.append({'arm':side,'status':'timeout' if isinstance(exc,PlanningTimeout) else 'unavailable','reason':str(exc),'seconds':round(time.monotonic()-began,3)})
+                self.diagnostics.append({'arm':side,'failures':list(getattr(planner,'candidate_failures',[]))})
+                if context:context.checkpoint()
                 continue
-            if stopped():raise ValueError('用户停止')
-            self.attempts.append({'arm':side,'status':'planned'})
-            plan.update(arm=side,arm_selection=copy.deepcopy(self.attempts),tool_geometry=config['tool_geometry'])
+            if stopped():raise PlanningCancelled('用户已停止规划，未生成可执行路径')
+            self.attempts.append({'arm':side,'status':'planned','seconds':round(time.monotonic()-began,3)})
+            plan.update(arm=side,arm_selection=copy.deepcopy(self.attempts),tool_geometry=config['tool_geometry'],reach_precheck=copy.deepcopy(self.reach_diagnostics))
             return plan,planner,config,tcp,center,correction
-        raise ValueError('双臂路径均未通过：'+'；'.join(('左手' if a['arm']=='left' else '右手')+'：'+a['reason'] for a in self.attempts))
+        raise ValueError(('选定手臂路径未通过：' if native else '双臂路径均未通过：')+'；'.join(('左手' if a['arm']=='left' else '右手')+'：'+a['reason'] for a in self.attempts))

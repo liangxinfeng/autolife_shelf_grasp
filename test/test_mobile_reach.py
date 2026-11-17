@@ -84,8 +84,8 @@ def test_outside_range_uses_only_base_sweep_not_full_grasp_plan(monkeypatch):
     assert result['reach_checked'] and result['sweep_checked'] and result['checked_states']==0
     assert m.validate_request(result,result['token'])['enabled']
     # 同一个距离提议遇到机身前方真实点，不能启动补偿。
-    result=m.grasp_reposition(pool,{},[.74,0,.6],{},dict(auto_arm_selection=False,arm='right',up_torso=[0,0,1]),[0,0,0],np.vstack([distant(),[.13,0,.5]]),lambda:False,lambda s:None)
-    assert result is None
+    with pytest.raises(ValueError,match='补偿通道存在障碍'):
+        m.grasp_reposition(pool,{},[.74,0,.6],{},dict(auto_arm_selection=False,arm='right',up_torso=[0,0,1]),[0,0,0],np.vstack([distant(),[.13,0,.5]]),lambda:False,lambda s:None)
 
 
 def test_preview_offer_never_starts_base_or_enables(monkeypatch):
@@ -162,7 +162,7 @@ def test_replan_failure_stops_prepared_session_and_never_runs_old_plan(window):
 
 def test_target_reassociation_skips_bad_depth_candidate(monkeypatch):
     from autolife_shelf_grasp_306 import bottle
-    def points(frame,mask,T,cfg):
+    def points(frame,mask,T,cfg,**kwargs):
         if mask=='bad':raise ValueError('no depth')
         return np.tile([.6,0,.7],(50,1)),None,None
     monkeypatch.setattr(bottle,'object_points',points)

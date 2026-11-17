@@ -9,7 +9,7 @@ import math
 import time
 import numpy as np
 from .arm_selection import gripper_name
-from .grip_width import load_curve
+from .grip_width import load_curve,opening_clears_path
 
 
 class ClosingEvidence:
@@ -58,7 +58,9 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
     target_width=float(np.interp(goal,positions[::-1],widths[::-1]))
     if clear_width is not None and (closing or not math.isfinite(clear_width) or not 0<clear_width<=target_width):
         raise ValueError('物品释放所需开口超出夹爪范围，请重新规划')
-    minimum=(state.get('minimum_opening_mm') or object_width_m*1000) if opening_width is not None else ((object_width_m*1000 if object_width_m>0 else release_width) if release_width is not None else None)
+    minimum=state.get('minimum_opening_mm')
+    if minimum is None and clear_width is not None:
+        minimum=object_width_m*1000 if object_width_m>0 else clear_width
     if minimum is not None and (not math.isfinite(minimum) or not 0<minimum<=clear_width or minimum+1e-6<object_width_m*1000):
         raise ValueError('路径所需夹爪净开口无效，请重新规划')
     effective_clear_width=minimum
@@ -90,7 +92,7 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
             # 精确位置量与夹住/松开并不等价；不再等待目标残差归零。
             # 抓放路径有实际净开口要求时，只核对必要间隙，不要求全开90mm。
             actual_width=float(np.interp(q[jaw],positions[::-1],widths[::-1]))
-            if not closing and minimum is not None and actual_width+1e-6<minimum:
+            if not closing and minimum is not None and not opening_clears_path(actual_width,minimum):
                 hold(node,['grippers'])
                 raise ValueError(f'当前夹爪净开口{actual_width:.1f}mm小于路径所需{minimum:.1f}mm')
             if not closing:hold(node,['grippers'])

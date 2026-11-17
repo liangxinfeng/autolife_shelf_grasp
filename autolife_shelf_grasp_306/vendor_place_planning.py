@@ -33,6 +33,10 @@ class VendorPlacePlanner(VendorGraspPlanner):
         self.context.set_stage('放置整段定时与模型复核',arm=self.cfg['arm'])
         # 复用抓取时已核对的开口几何与10mm退出间隙，不要求精确全开。
         plan['release_opening_m']=min(float(self.cfg['gripper_max_width_m']),float(grasp['grasp_width_m'])+.010)
+        # 放置计划必须携带实际物品宽度；否则执行器会把张开目标（常为90mm）
+        # 当作物品的最小脱离开口，已松开的夹爪也会被端点残差阻断。
+        plan['grasp_width_m']=float(grasp['grasp_width_m'])
+        plan['release_minimum_opening_m']=max(plan['grasp_width_m'],float(grasp.get('minimum_opening_m',plan['grasp_width_m'])))
         plan['vendor_blocks']=build_blocks(plan,self.cfg)
         product=plan['product'];up=np.asarray(self.cfg['up_torso']);tcp=np.asarray(tcp)
         reference=self.placement_grasp_rotation(grasp)
@@ -63,4 +67,6 @@ class VendorPlacePlanner(VendorGraspPlanner):
                     checked_states.add(key)
             if block['release_after']:guard.check_support(block['waypoints'][-1])
         plan['native_checked_states']=checks
+        from .placement_arm_reset import attach
+        attach(self,plan,guard)
         return plan

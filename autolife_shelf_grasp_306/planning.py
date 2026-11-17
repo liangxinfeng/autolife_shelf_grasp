@@ -252,7 +252,9 @@ class Planner:
     @grasp_scope
     def plan(self,source,tcp,center,product):
         from .low_object_grasp import enabled,support
+        from .grasp_candidate_hint import matching_hint
         if enabled(product,self.cfg):product=support(product,center,self.cfg['up_torso'])
+        self._active_reach_candidate=matching_hint(self,source,tcp,center,product)
         self.guard.begin_fixed_neck(source)
         started=time.monotonic();failures=[];late_failures=set()
         self.candidate_failures=failures
@@ -394,7 +396,8 @@ class Planner:
                 'tcp_goal':end_position.tolist(),'max_speed_deg_s':path.max_speed,
                 'max_tilt_deg':round(max_tilt,2)},checked
 
-    def _route(self,source,tcp,center,product,flexible,started,yaw_offset=0.,profile='direct'):
+    def route_geometry(self,source,tcp,center,product,flexible,yaw_offset=0.):
+        """预判与正式路径共用目标、物理指尖、倾角和桌面几何，不访问硬件。"""
         cfg=self.cfg;self.guard.cache.clear()
         yaw=np.deg2rad(cfg['approach_yaw_deg']+yaw_offset)
         width=product['depth_m'] if product.get('geometry')=='bag_edge' else product['diameter_m']
@@ -408,7 +411,7 @@ class Planner:
             route_cfg={**cfg,'pregrasp_m':max(cfg['pregrasp_m'],projected_width(product,forward)/2+.05)}
         from .low_object_grasp import orientation,enabled
         physical_tcp=np.asarray(tcp)-np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))
-        low_contact=enabled(product,cfg)
+        low_contact=enabled(product,cfg);contact_fraction=None
         if low_contact:
             from .low_object_grasp import contact_orientation
             product={**product,'object_center_offset_wrist':product.get('object_center_offset_wrist',[0.,0.,0.])}
@@ -427,6 +430,15 @@ class Planner:
         st=stages(center,yaw,route_cfg)
         continuous=cfg.get('fixed_carry_enabled',False) and cfg.get('carry_return_mode')=='continuous_reset'
         if continuous:st=st[:3]  # No mandatory 20 cm withdrawal detour.
+        return (cfg,yaw,width,local_contact,route_cfg,physical_tcp,low_contact,product,tcp,desired,approach,pitch,low_clearance,height_shift,flexible,st,continuous,contact_fraction)
+
+    def _route(self,source,tcp,center,product,flexible,started,yaw_offset=0.,profile='direct'):
+        import copy
+        from .grasp_candidate_hint import joint_transit
+        hint=getattr(self,'_active_reach_candidate',None) if profile=='joint_prechecked' else None
+        if hint is not None and abs(hint['yaw_offset_deg']-yaw_offset)>1e-7:hint=None
+        geometry=copy.deepcopy(hint['geometry']) if hint is not None else self.route_geometry(source,tcp,center,product,flexible,yaw_offset)
+        (cfg,yaw,width,local_contact,route_cfg,physical_tcp,low_contact,product,tcp,desired,approach,pitch,low_clearance,height_shift,flexible,st,continuous,contact_fraction) = geometry
         toolR=Rotation.from_quat(cfg['T_wrist_tool_quat_xyzw']).as_matrix()
         minimum_opening=float(width)
         def check_aperture(q):
@@ -468,16 +480,15 @@ class Planner:
                 # when the pregrasp itself is reachable. Solve that endpoint,
                 # then validate a continuous joint-space transit from measured
                 # source; this is not a direct jump to a remote IK seed.
-                seed=(self.pregrasp_from_contact(source,tcp,center,endpoint,desired,product)
+                seed=(dict(hint['key_poses'][0]) if hint is not None else
+                      self.pregrasp_from_contact(source,tcp,center,endpoint,desired,product)
                       if profile=='joint_from_grasp' else dict(source))
-                if profile not in ('joint_direct','joint_from_grasp'):
+                if profile not in ('joint_direct','joint_from_grasp','joint_prechecked'):
                     values=np.deg2rad([source[n] for n in self.names])
                     values[getattr(self,'arm_bias_index',1)]+=np.deg2rad(20. if profile=='joint_elbow_positive' else -20.)
                     seed.update(zip(self.names,np.rad2deg(np.clip(values,*self.bounds))))
                 goal=self.solve(seed,tcp,endpoint,desired,flexible,global_goal=True)
-                count=max(2,int(np.ceil(max(abs(goal[n]-source[n]) for n in self.names)/2.))+1)
-                waypoints=[{**source,**{n:source[n]+t*(goal[n]-source[n]) for n in self.names}}
-                           for t in np.linspace(0,1,count)]
+                waypoints=list(joint_transit(source,goal,self.names))
                 for q in waypoints:self.check(q,tcp,False,product)
                 checked+=len(waypoints)
                 path=configure_grasp_path(JointPath(self.names,waypoints),cfg)

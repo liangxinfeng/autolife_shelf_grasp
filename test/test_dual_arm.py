@@ -100,8 +100,9 @@ def test_pool_prefers_near_hand_and_bounded_fallback(monkeypatch,failing):
 
 
 def test_cancel_never_enters_next_arm(monkeypatch):
+    from autolife_shelf_grasp_306.planning_control import PlanningCancelled
     pool=a.ArmPlannerPool({'arm':'left'}, {},fake_fk(),lambda cfg:None)
-    with pytest.raises(ValueError,match='停止'):pool.plan({},[.4,.3,0.],{}, {},stopped=lambda:True)
+    with pytest.raises(PlanningCancelled,match='停止'):pool.plan({},[.4,.3,0.],{}, {},stopped=lambda:True)
 
 
 def test_tool_transfer_keeps_real_mount_not_torso_mirror(monkeypatch):

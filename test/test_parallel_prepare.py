@@ -94,6 +94,7 @@ def test_preparation_process_single_lease_and_handoff(monkeypatch,tmp_path,kind,
     if failed:assert 'destroy' in events and any(isinstance(x,tuple) and x[0]=='close' for x in events)
     else:
         assert handoff[0][1]['node'] is node and handoff[0][1]['session'].active
+        if kind=='grasp' and fault!='pause':assert ('hold',['grippers']) not in events
         assert 'destroy' not in events and not any(isinstance(x,tuple) and x[0]=='close' for x in events)
     if commands:
         assert all(10<=value[f'{side}_gripper_target_joints_position'][0]<=300 for _,value in commands for side in ('left','right'))
@@ -136,8 +137,10 @@ def test_prepared_opening_reuses_measured_clearance_without_wait(tmp_path):
     fn=next(n for n in ast.walk(main) if isinstance(n,ast.FunctionDef) and n.name=='finish_gripper')
     exec(compile(ast.Module(body=[fn],type_ignores=[]),'<actual prepared opening>','exec'),ns)
     assert ns['finish_gripper'](state)=='opening_clear'
+    state['minimum_opening_mm']=89.19730813966091
+    assert ns['finish_gripper'](state)=='opening_clear'  # 真实故障:89.15mm反馈，不应被0.05mm差拦住
     state['minimum_opening_mm']=89.9
-    with pytest.raises(ValueError,match='不足'):ns['finish_gripper'](state)
+    with pytest.raises(ValueError,match='受阻'):ns['finish_gripper'](state)
 
 
 @pytest.mark.parametrize('placing',[False,True])

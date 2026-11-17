@@ -1,0 +1,56 @@
+"""带当前腰部限位的工作空间外包络。只可证明范围外，不证明路径可执行。"""
+import itertools
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
+import numpy as np
+from .mobile_reach import arm_envelope
+
+
+def shoulder_envelope(fk,q,tcp,side,cfg,step_deg=4.):
+    """用实际可转腰角的肩部球并集代替向所有方向扩大的单个大球。
+
+    网格之间加上由URDF链长推导的旋转弦长上界，避免漏掉格间可达区。
+    膝踝保持当前值，反向下蹲/身体高度自然进入坐标变换。
+    """
+    from autolife_handeye_calibration_306.core import BODY,TORSO
+    _,radius=arm_envelope(fk,q,tcp,side)
+    child='Link_'+side.title()+'_Wrist_Lower_to_Gripper'
+    while fk.joints[child][2]!=TORSO:child=fk.joints[child][2]
+    shoulder_child=child
+    tree=ET.parse(cfg['urdf_path']).getroot()
+    path=Path(cfg['vendor_control_config']) if cfg.get('vendor_control_config') else Path(cfg['vendor_python_path'])/'autolife_robot_arm/configs/robot_v3_1.json'
+    dead=json.loads(path.read_text())['MOTOR_DEAD_ZONE']
+    axes=[];padding=0.
+    for i,name in enumerate(BODY[2:],2):
+        limit=tree.find(f"joint[@name='{name}']/limit")
+        reach=float(cfg.get('vendor_grasp_waist_range_deg',[12.,8.])[i-2])
+        if not 0<reach<=20:raise ValueError('抓取腰部参与范围必须在0～20度内')
+        lo=max(np.rad2deg(float(limit.get('lower')))+dead['LEG_WAIST_LOWER_DEAD_ZONE'][i]+.5,q[name]-reach)
+        hi=min(np.rad2deg(float(limit.get('upper')))-dead['LEG_WAIST_UPPER_DEAD_ZONE'][i]-.5,q[name]+reach)
+        if not lo<=q[name]<=hi:raise ValueError('当前腰部位于原厂限位保护区，请先调整姿态')
+        values=np.linspace(lo,hi,max(2,int(np.ceil((hi-lo)/step_deg))+1));axes.append(values)
+        # 从该旋转轴到肩部的链长始终不小于实际旋转半径。
+        child=shoulder_child;lever=0.
+        while fk.joints[child][0]!=name:
+            lever+=float(np.linalg.norm(fk.joints[child][3][:3,3]));child=fk.joints[child][2]
+        padding+=2*lever*np.sin(np.deg2rad(values[1]-values[0])/4)
+    inverse=np.linalg.inv(fk.fk('Link_Zero_Point',TORSO,q));positions=[]
+    for pitch,yaw in itertools.product(*axes):
+        moved={**q,BODY[2]:float(pitch),BODY[3]:float(yaw)}
+        positions.append((inverse@fk.fk('Link_Zero_Point',shoulder_child,moved))[:3,3])
+    return np.array(positions),float(radius+padding)
+
+
+def margin(positions,radius,point):
+    return float(radius-np.linalg.norm(positions-np.asarray(point),axis=1).min())
+
+
+def current_margin(fk,q,tcp,side,cfg,point):
+    """大余量目标只做粗格；临界目标细分，避免格间外扩把不可达点误包进去。"""
+    value=None
+    for step in (4.,1.,.5):
+        positions,radius=shoulder_envelope(fk,q,tcp,side,cfg,step)
+        value=margin(positions,radius,point)
+        if value<0 or value>.03:break
+    return value

@@ -59,6 +59,7 @@ def main():
         ('cancel_localization',Trigger,'/cartographer_global_relocalization/cancel')]}
     latest={};odom=None;odom_stamp=None;nav_bool=False;actions={};names=[];map_meta=None;arm=None
     localization_status={};obstacle_meta=None;obstacle_time=0.
+    operation_grid=None;operation_grid_time=0.;operation_screen_token=None
     nav2_readiness={};nav2_readiness_time=0.
     guard={};guard_time=0.;rearm_future=None;rearm_sent=0.;rearm_automatic=False
     images=LatestImages();last_obstacle_submit=0.
@@ -182,7 +183,8 @@ def main():
     def map_received(m):
         images.submit('map',render_map,m)
     def obstacle_received(m):
-        nonlocal last_obstacle_submit
+        nonlocal last_obstacle_submit,operation_grid,operation_grid_time
+        operation_grid=m;operation_grid_time=time.monotonic()
         if time.monotonic()-last_obstacle_submit<.5:return
         last_obstacle_submit=time.monotonic()
         images.submit('obstacles',render_obstacle,m)
@@ -191,6 +193,7 @@ def main():
     proximity_publisher=node.create_publisher(Bool,'/grasp306/proximity_voice_enabled',1)
     last_voice_publish=-1e9
     from .voice_settings import read_proximity_voice
+    chain_publisher=node.create_publisher(String,'/navigation/parking_chain_command',10)
     initial_publisher=node.create_publisher(PoseWithCovarianceStamped,'/initialpose',qos)
     node.create_subscription(String,'/waypoints/navigation_status',status,qos)
     node.create_subscription(String,'/navigation/readiness',readiness,qos)
@@ -228,6 +231,35 @@ def main():
         while running and rclpy.ok():
             rclpy.spin_once(node,timeout_sec=.025);now=time.monotonic()
             (run/'navigation_bridge_heartbeat').touch()
+            # 抓放规划只查询候选格子是否空闲，不下发运动；每个请求最多六点。
+            screen=run/'operation_screen_request.json'
+            if screen.exists():
+                from .core import atomic_json
+                query=json.loads(screen.read_text('utf8'))
+                if query.get('token')!=operation_screen_token:
+                    operation_screen_token=query.get('token');reply={'token':operation_screen_token}
+                    try:
+                        from .operation_docking import chain_api
+                        import yaml
+                        from .navigation_logic import NAV
+                        if query['map']!=active_map() or not 0<=now-query['created']<2.:raise ValueError('操作停靠预筛地图或请求已改变')
+                        if operation_grid is None or now-operation_grid_time>3. or operation_grid.header.frame_id!='map':
+                            raise ValueError('操作停靠预筛缺少最新全局代价地图')
+                        candidates=query['candidates']
+                        if len(candidates)>6:raise ValueError('操作候选数量无效')
+                        config=yaml.safe_load((NAV/'config/nav2_params.yaml').read_text())
+                        polygon=yaml.safe_load(config['local_costmap']['local_costmap']['ros__parameters']['footprint'])
+                        footprint=(min(v[0] for v in polygon),max(v[0] for v in polygon),min(v[1] for v in polygon),max(v[1] for v in polygon))
+                        api=chain_api();m=operation_grid.metadata;q=m.origin.orientation
+                        origin=(m.origin.position.x,m.origin.position.y,math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z)))
+                        reply['allowed']=[];reply['rejected']=[]
+                        for c in candidates:
+                            clear=api.rectangle_clear(operation_grid.data,m.size_x,m.size_y,m.resolution,
+                                origin,[c[k] for k in ('x','y','yaw')],footprint,float(query['clearance']),lethal=254)
+                            if clear is True:reply['allowed'].append(c['index'])
+                            else:reply['rejected'].append(dict(index=c['index'],reason='occupied' if clear is False else 'unknown_or_outside_map'))
+                    except Exception as exc:reply['error']=str(exc)
+                    atomic_json(run/'operation_screen_result.json',reply)
             if not (run/'heartbeat').exists() or time.time()-(run/'heartbeat').stat().st_mtime>4.:
                 stopping=True
                 if goal:cancel_reason='抓取界面心跳中断，已请求取消本次导航'
@@ -289,7 +321,27 @@ def main():
                         raise ValueError('底盘正被其他控制端使用')
                     if cmd['map']!=active_map() or cmd['name'] not in names:raise ValueError('地图或航点已改变，请重新选择')
                     step_posture=None
-                    if cmd.get('workflow') is True:
+                    operation=None
+                    if cmd.get('operation_token'):
+                        from .operation_docking import validate,chain_api
+                        operation=json.loads((run/'mobile_reach_request.json').read_text('utf8'))
+                        validate(operation,cmd['operation_token'])
+                        if operation['map']!=cmd['map'] or operation['chain_name']!=cmd['name']:raise ValueError('操作停靠关联已改变')
+                        state=json.loads((run/'parallel_prepare_state.json').read_text('utf8'))
+                        control=json.loads((run/'mobile_reach_control.json').read_text('utf8'))
+                        if state.get('status')!='base_released' or state.get('token')!=control.get('prepare_token') or now-state.get('stamp',0)>.5:
+                            raise ValueError('操作停靠尚未取得底盘控制交接')
+                        current=pose()
+                        if current is None or math.dist(current[:2],operation['source_map_pose'][:2])>.05:
+                            raise ValueError('预览后底盘位置改变，请重新识别')
+                        delta=current[2]-operation['source_map_pose'][2]
+                        if abs(math.atan2(math.sin(delta),math.cos(delta)))>.05:raise ValueError('预览后底盘朝向改变，请重新识别')
+                        if arm is None:raise ValueError('未收到当前运输姿态')
+                        record={'q':dict(arm[1])}
+                        if any(abs(v-operation['source_q'][n])>3. for n,v in record['q'].items() if 'Gripper' not in n):
+                            raise ValueError('预览后身体或手臂姿态改变，请重新识别')
+                        if node.count_subscribers('/navigation/parking_chain_command')<1:raise ValueError('停靠链后台未就绪')
+                    elif cmd.get('workflow') is True:
                         from .task_flow import navigation_pose
                         context=json.loads((run/'task_flow.json').read_text())
                         record={'q':navigation_pose(cmd,context,arm_history,time.monotonic())}
@@ -305,9 +357,14 @@ def main():
                     goal={**cmd,'step_posture':step_posture,'expected_q':record['q'],'progress':GoalProgress(req.name,node.get_clock().now().nanoseconds/1e9)}
                     waiting_navigation=None
                     ack=False;arrived=False;stationary.reset();cancel_reason=None;cancel_sent=False;sent_at=now
-                    try:pending=call('navigate',req)
-                    except Exception:goal=None;raise
-                    pending_kind='navigate';pending_time=now
+                    if operation:
+                        chain_publisher.publish(String(data=json.dumps(dict(action='navigate_operation',map_key=cmd['map'],name=cmd['name'],
+                            operation={'chain_sha256':operation['chain_sha256'],'candidates':operation['candidates']}),ensure_ascii=False)))
+                        ack=True;emit('nav_started',run_id=goal['run_id'],leg=goal['leg'])
+                    else:
+                        try:pending=call('navigate',req)
+                        except Exception:goal=None;raise
+                        pending_kind='navigate';pending_time=now
                 elif action=='map':
                     if goal or pending or busy() or not still():raise ValueError('请停止导航并停稳后再更换地图')
                     path=str(Path(cmd['path']).resolve())
@@ -422,6 +479,7 @@ def main():
                     except Exception as exc:cancel_reason='导航暂停/继续不可用：'+str(exc)
                 try:check_arm(goal['expected_q'])
                 except ValueError as exc:cancel_reason=cancel_reason or str(exc)
+                if goal.get('operation_token') and not goal['progress'].seen and now-sent_at>5.:cancel_reason='停靠链未确认接收本次操作目标'
                 if now-sent_at>600:cancel_reason='导航超过10分钟，已停止本轮演示'
                 try:
                     if active_map()!=goal['map']:cancel_reason='当前地图改变，演示停止'

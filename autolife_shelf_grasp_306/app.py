@@ -284,9 +284,14 @@ class Window(DemoNavigation,Q.QWidget):
         self.execute.setToolTip('先选择物品并完成规划预览；路径通过检查后可确认抓取。')
         self.execute.clicked.connect(self.start_execution);actions.addWidget(self.execute,1)
         self.place=Q.QPushButton('确认放置');self.place.clicked.connect(self.start_placement);actions.addWidget(self.place)
-        self.mobile_reach_enabled=Q.QCheckBox('超范围目标全向平移补偿');self.mobile_reach_enabled.setChecked(True)
-        self.mobile_reach_enabled.setToolTip('前后/左右同时平移，总距离最多15厘米；预览不移动。执行时保持朝向、双臂与夹持，检查整段通道，到位后重新识别规划。')
+        self.mobile_reach_enabled=Q.QCheckBox('按停靠链调整操作位置');self.mobile_reach_enabled.setChecked(True)
+        self.mobile_reach_enabled.setToolTip('原地可抓不移动；需要调整时沿指定停靠链选择有操作余量的位置，使用导航到达后重新取景。预览不会移动。')
         actions.addWidget(self.mobile_reach_enabled)
+        self.operation_chain=Q.QComboBox();self.operation_chain.setMinimumWidth(135)
+        self.operation_chain.addItem('自动：上次到达的停靠链','')
+        self.operation_chain.setToolTip('任务自动关联上一次成功到达的停靠链；单独抓放可在这里选择。普通航点不会猜测关联链。')
+        actions.addWidget(self.operation_chain)
+        self.operation_chain.currentIndexChanged.connect(lambda _:self.invalidate_plan())
         self.mobile_reach_enabled.toggled.connect(lambda _:self.invalidate_plan())
         self.place.setToolTip('本窗口完成抓取后，识别当前桌面并自动放置；不需要演示导航。请先停稳并确认仍夹着物品。')
         self.stop=Q.QPushButton('停止运动');self.stop.setObjectName('stop');self.stop.clicked.connect(self.stop_motion);actions.addWidget(self.stop)
@@ -465,11 +470,13 @@ class Window(DemoNavigation,Q.QWidget):
         if self.demo.isChecked():
             self.execute.setText('确认演示抓取');self.execute.setEnabled(idle)
         self.mobile_reach_enabled.setEnabled(idle)
+        self.operation_chain.setEnabled(idle)
         self.mobile_reach.controls()
 
     def send(self,action,**values):
         if action in ('plan','standalone_place','demo_place'):
             values['mobile_reach']=self.mobile_reach_enabled.isChecked()
+            values['operation_chain_name']=self.operation_chain.currentData() or getattr(self.navigation,'last_chain','')
         if hasattr(self,'studio') and self.studio.visual.busy:
             self.status.setText('正在记录/计算物体参照，请完成或停止后再操作视觉抓取');return
         if not self.ready:
@@ -729,7 +736,9 @@ class Window(DemoNavigation,Q.QWidget):
             self.workflow.fail(self.status.text())
 
     def invalidate_plan(self):
-        if hasattr(self,'mobile_reach') and not self.mobile_reach.active:self.mobile_reach.pending=None
+        if hasattr(self,'mobile_reach') and not self.mobile_reach.active:
+            self.mobile_reach.pending=None
+            if hasattr(self,'navigation'):self.navigation.map.operation_target=None
         if hasattr(self,'auto_grasp_gate'):self.auto_grasp_gate.revoke()
         self.pending_plan=None;self.expected_target=None;self.execute.setEnabled(False);self.execute.setText('确认抓取')
 
@@ -923,15 +932,7 @@ class Window(DemoNavigation,Q.QWidget):
         self.live()
         if self.workflow.active:
             self.workflow.advance();return
-        if self.cancel_pending or (self.run/'stop').exists():
-            self.status.setText('放置完成，用户已停止，未自动复位。');self.controls();return
-        if result.get('auto_prepare_allowed') is False:
-            self.status.setText('放置完成，准备确认未通过：'+result.get('preparation_note','请检查保持状态'));self.controls();return
-        # Reuse a physically confirmed prepared pose instead of repeating the
-        # same arm movement. Otherwise use the existing checked reset workflow.
-        self.send('prepared' if result.get('prepared_after_place') else 'prepare')
-        self.status.setText('放置完成：已准备好下一轮，正在刷新识别。' if result.get('prepared_after_place')
-                            else '放置完成：自动复位并准备下一轮…')
+        self.status.setText('放置完成：已退离并恢复双臂，保持腰腿、头部和夹爪。' if result.get('placement_completion')=='withdraw_then_arms_reset' else '放置完成：已退出物品并保持当前位置，不自动复位。');self.controls()
 
     def stop_motion(self,checked=False,*,reason=None,source='operator'):
         reason=reason or '用户请求停止'

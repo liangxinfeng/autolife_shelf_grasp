@@ -61,7 +61,8 @@ def validate_blocks(plan):
     width=float(plan.get('release_opening_m',0.))
     if not np.isfinite(width) or not 0<width<=float(plan['config'].get('gripper_max_width_m',.09)):
         raise ValueError('放置计划缺少物品释放开口，请重新规划')
-    validate_reset_reference(plan['config'])
+    if plan.get('placement_completion')!='withdraw_hold':
+        validate_reset_reference(plan['config'])
     names=BODY[2:]+ARMS[plan['config']['arm']];source=plan['source_q']
     if plan.get('controlled_joints')!=names:raise ValueError('放置腰臂顺序无效')
     if [s['phase'] for s in plan['segments']]!=['place_approach','place_lower','place_return']:
@@ -82,7 +83,10 @@ def validate_blocks(plan):
                 if not np.isfinite([lo,hi]).all() or not lo<=source[n]<=hi or not lo-1e-7<=q[n]<=hi+1e-7:
                     raise ValueError('放置腰部超出预检范围')
         previous=segment['waypoints'][-1]
-    if any(abs(previous[n]-source[n])>1e-6 for n in BODY):
+    if plan.get('placement_completion')=='withdraw_then_arms_reset':
+        from .placement_arm_reset import validate
+        validate(plan)
+    elif plan.get('placement_completion')!='withdraw_hold' and any(abs(previous[n]-source[n])>1e-6 for n in BODY):
         raise ValueError('放置收回未恢复开始时腰腿姿态')
 
 

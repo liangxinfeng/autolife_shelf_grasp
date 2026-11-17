@@ -1,0 +1,25 @@
+{
+  "package.xml": [
+    "action_msgs",
+    "ament_python",
+    "autolife_handeye_calibration_306",
+    "control_center_chassis_guard",
+    "control_center_joint_control",
+    "control_center_navigation",
+    "geometry_msgs",
+    "nav2_msgs",
+    "nav_msgs",
+    "openarmx_teleop_vr_306_v4",
+    "openarmx_teleop_vr_navigation_306",
+    "python3-numpy",
+    "python3-opencv",
+    "python3-pyqt5",
+    "python3-redis",
+    "python3-scipy",
+    "python3-yaml",
+    "rclpy",
+    "std_msgs",
+    "std_srvs",
+    "tf2_ros"
+  ]
+}

@@ -98,6 +98,10 @@ class TableContactFailure(ValueError):
     """当前指腹接触位置无法满足桌面间隙；可搜索其他真实指腹位置。"""
 
 
+class ContactReachFailure(TableContactFailure):
+    """存在离桌朝向，但该朝向的逆解不可达；不得再报告成几何触桌。"""
+
+
 def contact_orientation(planner,source,physical_tcp,offset,center,product,yaw):
     """优先保留原接触位置，仅在低物体贴桌时向指尖搜索，不修改模型或配置。"""
     from .gripper_contact_geometry import contact_tcp
@@ -105,15 +109,17 @@ def contact_orientation(planner,source,physical_tcp,offset,center,product,yaw):
     # contact_tcp同时验证配置；不能用候选掩盖非法参数。
     contact_tcp(planner,physical_tcp,preferred)
     fractions=[preferred]+[f for f in (.85,.90) if f>preferred+1e-9]
-    last=None
+    last=None;reach_failure=None
     for fraction in fractions:
         physical=contact_tcp(planner,physical_tcp,fraction)
         try:
             result=orientation(planner,source,physical+np.asarray(offset),center,product,yaw,adjust_height=True)
             return physical,result,fraction
+        except ContactReachFailure as exc:reach_failure=exc
         except TableContactFailure as exc:last=exc
     from .planning import IKFailure
-    raise IKFailure(str(last)) from last
+    reason=reach_failure or last
+    raise IKFailure(str(reason)) from reason
 
 
 def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
@@ -122,7 +128,7 @@ def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
     short=enabled(product,planner.cfg);angles=planner.cfg.get('low_object_pitch_candidates_deg',[35.,45.,55.,65.,75.]) if short else [0.]
     if not angles or any(not np.isfinite(a) or not 0<float(a)<80 for a in angles) and short:
         raise ValueError('低物体俯角候选应在0～80度之间')
-    if short:
+    if short and not getattr(planner,'_reach_quick_probe',False):
         # 原角度优先；先补查相邻5度，再按1度细化，避免稀疏角度漏掉贴桌可行解。
         # 不改变配置，也不缩小手指、物体或桌面安全间隙。
         coarse=list(angles)
@@ -159,7 +165,7 @@ def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
                 if not feasible(source,virtual_tcp,center,R,product):continue
             return R,B[:,0],float(pitch),None if clearance is None else clearance+shift*float(u@np.asarray(surface['normal'])),shift
     if geometry_available:
-        raise TableContactFailure('已找到离桌朝向，但未找到与当前关节范围及收回姿态兼容的抓取逆解')
+        raise ContactReachFailure('已找到离桌朝向，但未找到与当前关节范围及收回姿态兼容的抓取逆解')
     raise TableContactFailure('低矮物体的抓点离桌面过近，倾斜后夹爪仍可能触桌；请向上微调抓点或调整物体位置')
 
 

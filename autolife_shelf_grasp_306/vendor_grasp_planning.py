@@ -78,9 +78,17 @@ class VendorGraspPlanner(Planner):
         # 原厂IK精确解完整位姿，不重复尝试同一求解的“软朝向”分支。
         # 先求预抓端点并预检关节空间过渡，再考虑直线接近。
         if yaws is None:yaws=[0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.]
-        yaws=list(yaws);self.total_candidates=len(yaws)*6;self.current_candidate=0
+        yaws=list(yaws)
+        preferred=getattr(self,'preferred_grasp_yaw',None)
+        if preferred is not None:yaws.sort(key=lambda value:abs(value-preferred)>1e-7)
+        hint=getattr(self,'_active_reach_candidate',None)
+        hinted_yaw=hint['yaw_offset_deg'] if hint is not None else None
+        if hinted_yaw is not None:yaws.sort(key=lambda value:abs(value-hinted_yaw)>1e-7)
+        self.total_candidates=len(yaws)*6+int(hinted_yaw is not None and any(abs(y-hinted_yaw)<1e-7 for y in yaws));self.current_candidate=0
         for yaw in yaws:
-            for profile in ('joint_direct','joint_from_grasp','joint_elbow_positive','joint_elbow_negative','direct','outward_8'):
+            profiles=('joint_direct','joint_from_grasp','joint_elbow_positive','joint_elbow_negative','direct','outward_8')
+            if hinted_yaw is not None and abs(yaw-hinted_yaw)<1e-7:profiles=('joint_prechecked',)+profiles
+            for profile in profiles:
                 self.current_candidate+=1
                 self.context.set_stage('候选路径',arm=self.cfg['arm'],
                     candidate=self.current_candidate,total_candidates=self.total_candidates)
@@ -98,8 +106,11 @@ class VendorGraspPlanner(Planner):
             tilt=np.rad2deg(np.arccos(np.clip((end_R.T@up)@(rotation.T@up),-1.,1.)))
             if tilt>float(self.cfg.get('carry_max_tilt_deg',45.)):
                 self._attitude_cache[key]=False;return False
-        try:self.solve(source,tcp,center,rotation)
-        except IKFailure:self._attitude_cache[key]=False;return False
+        from .planning import CollisionFailure
+        try:
+            q=self.solve(source,tcp,center,rotation)
+            self.check(q,tcp,False,product)
+        except (IKFailure,CollisionFailure):self._attitude_cache[key]=False;return False
         self._attitude_cache[key]=True;return True
 
     def pregrasp_from_contact(self,source,tcp,center,endpoint,rotation,product):
@@ -170,7 +181,7 @@ class VendorGraspPlanner(Planner):
             position=self.anchor[:3,:3].T@(wrist.translation-self.anchor[:3,3])
         return position+rotation@tcp,rotation.copy()
 
-    def configure_source(self, source):
+    def configure_model(self, source):
         self._solve_cache={}
         self.source = dict(source)
         self.anchor = self.fk.fk(BASE, TORSO, source)
@@ -193,6 +204,9 @@ class VendorGraspPlanner(Planner):
             waist_bounds.append([lo, hi])
         self.bounds = np.deg2rad(np.array(waist_bounds + [
             self.joint_limit_policy['bounds_deg'][n] for n in self.arm_names]).T)
+
+    def configure_source(self, source):
+        self.configure_model(source)
         from .vendor_ik_process import VendorIKProcess
         locked={n:source[n] for n in BODY[:2]}
         if self.solver is None:

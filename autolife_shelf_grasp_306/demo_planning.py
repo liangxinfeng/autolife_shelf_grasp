@@ -475,7 +475,7 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
     # Endpoint success alone never authorizes motion.
     # Try the higher clearance exit first. A lower exit remains available for
     # scenes with overhead constraints; both receive identical full validation.
-    for choice,exit_lift in ((c,h) for c in ranked for h in (None,.08,.03)):
+    for choice,exit_lift in ((c,h) for c in ranked for h in (0.,.03,.08)):
         target=choice['target'];yaw=choice['yaw']
         try:
             phase='place_approach';progress=0
@@ -531,9 +531,10 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
                 stages.append((name,phase,waypoints,carrying))
                 if phase=='place_lower':table_guard.check_support(previous)
                 progress+=1
-            end=planner.carry_target(previous) if hasattr(planner,'placement_grasp_rotation') else carry_goal(cfg,previous,planner.names)
-            return_points=[previous,end] if exit_lift is None else [*stages.pop()[2],end]
-            stages.append(('直接收回复位姿态' if exit_lift is None else '连续退出并收回复位姿态','place_return',return_points,False))
+            # 放置只退离已释放物品，不追加复位目标，也不恢复开始时腰部。
+            # 退离仍经过与下降相同的完整模型、桌面及物品检查。
+            return_points=stages.pop()[2]
+            stages.append(('退出物品并保持','place_return',return_points,False))
             release_start,release_R=planner.pose(return_points[0],tcp)
             tool=release_R@Rotation.from_quat(cfg['T_wrist_tool_quat_xyzw']).as_matrix()
             # Reject a bad direct return before dense-checking approach/lower.
@@ -596,7 +597,7 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
                               'path_speed_profile':profile,
                               'transfer_from_s':transfer_from,
                               'tcp_goal':planner.pose(waypoints[-1],tcp)[0].tolist()})
-            result=dict(kind='place',place_protocol_version=3,source_q=source,segments=route,tcp=tcp.tolist(),
+            result=dict(kind='place',placement_completion='withdraw_hold',place_protocol_version=3,source_q=source,segments=route,tcp=tcp.tolist(),
                 product=product,center=target.tolist(),up_torso=up.tolist(),geometry_version=2,
                 self_collision_checked=True,table_height_checked=True,checked_states=checked,
                 joint_limit_policy=planner.joint_limit_policy,urdf_sha256=planner.fk.sha,

@@ -56,3 +56,12 @@ def command_from_plan(plan):
     for key in ('estimated_width_mm','requested_width_mm','nominal_target_width_mm','target_deg'):
         if not math.isclose(float(command[key]),expected[key],abs_tol=1e-6):raise ValueError('夹爪宽度计划不一致，请重新规划')
     return expected['target_deg']
+
+
+def opening_clears_path(actual_mm,required_mm):
+    """毫米实测标定只记录到整毫米；半毫米内差异不作为路径不通。
+
+    仅兼容测量/换算分辨率，不改变90毫米能力范围，也不把明显受阻当成张开。
+    """
+    actual=float(actual_mm);required=float(required_mm)
+    return math.isfinite(actual) and math.isfinite(required) and actual>=0 and required>0 and actual+.5>=required

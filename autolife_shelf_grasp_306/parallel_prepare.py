@@ -123,10 +123,10 @@ def main():
                     node._publish_vendor(node._gripper_pub,payload);node._last_operator_activity=now;last_send=now
                 if ready:break  # 目标按受限速度发送完成即交接，不等待精确位置。
                 if now-begin>timeout:raise ValueError('并行张爪指令输出未完成')
-            executor.hold_groups(node,['grippers'])
+            # 保留刚发送的张开目标；不能用稍滞后的反馈改写目标、提前锁住未全开的夹爪。
         status='ready';report(True)
         request=run/'parallel_prepare_execute.json'
-        deadline=time.monotonic()+90.
+        deadline=motion_time()+90.
         while True:
             spin()
             mobile=run/'mobile_reach_control.json'
@@ -135,19 +135,19 @@ def main():
                 if change.get('prepare_token')==args.token:
                     if change.get('operation')=='release_base' and base is not None:
                         base.check();base.close();base=None
-                        status='base_released';report(True)
+                        status='base_released';deadline=motion_time()+140.;report(True)
                     elif change.get('operation')=='reacquire_base' and base is None:
                         base=StationaryBaseGuard(node)
                         end=time.monotonic()+3.
                         while base.last is None:
                             spin()
                             if time.monotonic()>end:raise ValueError('补偿后等待底盘反馈超时')
-                        base.check();status='ready';report(True)
+                        base.check();status='ready';deadline=motion_time()+90.;report(True)
             if request.exists():
                 if base is None:raise ValueError('底盘补偿尚未归还控制权，未执行手臂路径')
                 command=json.loads(request.read_text('utf8'))
                 if command.get('token')==args.token:break
-            if time.monotonic()>deadline:raise ValueError('规划未提交执行，已退出并行准备')
+            if motion_time()>deadline:raise ValueError('规划未提交执行，已退出并行准备')
         path=(run/command['filename']).resolve()
         if path.parent!=run.resolve():raise ValueError('执行路径不属于当前任务')
         plan=json.loads(path.read_text('utf8'))

@@ -280,6 +280,7 @@ def main(argv=None,prepared=None):
         # A reset has no visual target. Source-pose and URDF checks above remain
         # mandatory; a slow hold-only enable must not expire its checked path.
         if not preparing and time.monotonic()-plan['created_monotonic']>cfg['plan_ttl_sec']:raise ValueError('使能后规划过期，请重新规划')
+        arm_reset_active=False
         def checked():
             spin()
             while (run/'task_pause').exists():
@@ -289,7 +290,11 @@ def main(argv=None,prepared=None):
             if base_guard is not None:base_guard.check()
             if not node._hardware_ready:raise ValueError('控制权/硬件状态失效：'+getattr(node,'last_lock_reason','请检查驱动状态'))
             fixed=([] if workspace_reset else BODY) if preparing else (BODY[:2] if native_motion else BODY)+NECK+ARMS[other]+[gripper_name(other)]
-            if fixed and max(abs(q[n]-source[n]) for n in fixed)>.7:raise ValueError('固定身体/另一侧关节已移动')
+            fixed_source=source
+            if arm_reset_active:
+                fixed=BODY+NECK+[gripper_name(other)]
+                fixed_source={**plan['arms_reset']['source_q'],gripper_name(other):source[gripper_name(other)]}
+            if fixed and max(abs(q[n]-fixed_source[n]) for n in fixed)>.7:raise ValueError('固定身体/另一侧关节已移动')
             if observing and abs(q[jaw]-plan['held_gripper_deg'])>8:
                 raise ValueError('观察期间夹爪状态改变，已停止抬手')
             if (placing or observing) and plan.get('placement_mode')=='standalone' and not released:
@@ -305,7 +310,8 @@ def main(argv=None,prepared=None):
                         tolerance=tolerance,result=None,
                         command_duration=max(.15,1.5*max(abs(v-begin[n]) for n,v in targets.items())/(240.*float(cfg.get('gripper_speed_scale',.5)))),
                         release_width_mm=plan['release_opening_m']*1000 if vendor_place and not closing else None,
-                        minimum_opening_mm=(plan['minimum_opening_m']*1000 if vendor_grasp and not closing and 'minimum_opening_m' in plan else None),
+                        minimum_opening_mm=(plan['release_minimum_opening_m']*1000 if vendor_place and not closing and 'release_minimum_opening_m' in plan else
+                            plan['minimum_opening_m']*1000 if vendor_grasp and not closing and 'minimum_opening_m' in plan else None),
                         required_opening_mm=(min(plan['grasp_width_m']*1000+float(cfg.get('grasp_opening_margin_mm',10.)),
                             float(cfg['gripper_max_width_m'])*1000) if vendor_grasp and not closing else None))
         def poll_gripper(state,q,now):
@@ -325,13 +331,13 @@ def main(argv=None,prepared=None):
             return None
         def finish_gripper(state):
             if prepared is not None and vendor_grasp and not state['closing']:
-                from .grip_width import load_curve
+                from .grip_width import load_curve,opening_clears_path
                 widths,positions,_=load_curve(cfg);q=checked()
                 actual=float(np.interp(q[jaw],positions[::-1],widths[::-1]))
                 minimum=state.get('minimum_opening_mm')
                 if minimum is None:raise ValueError('并行抓取缺少实际路径开口')
                 required=minimum
-                if actual+1e-6<required:raise ValueError('当前夹爪开口不足以通过本次路径')
+                if not opening_clears_path(actual,required):raise ValueError(f'夹爪实际净开口{actual:.1f}mm，路径需要{required:.1f}mm；请检查夹爪是否受阻')
                 return 'opening_clear'
             if native_motion:
                 from .grasp_gripper import execute as execute_gripper
@@ -394,6 +400,11 @@ def main(argv=None,prepared=None):
                     position_limit_m=.004 if landing else .008)
             execute_place_blocks(node,plan,checked,motion_now,release_at_landing,hold_groups,
                 lambda progress:atomic_json(run/'motion_progress.json',progress),endpoint_ok,native_trajectory_function)
+            if plan.get('placement_completion')=='withdraw_then_arms_reset':
+                from .placement_arm_reset import execute as reset_arms
+                arm_reset_active=True
+                reset_arms(node,plan,checked,motion_now,lambda progress:atomic_json(run/'motion_progress.json',progress),native_trajectory_function)
+                hold_groups(node,['left_arm','right_arm'])
         for index,segment in enumerate([] if workspace_reset or native_motion else plan['segments']):
             if preparing and (segment.get('neck_recovery') or segment.get('supported_neck_recovery')):continue
             print(segment['name']+'…',flush=True)
@@ -561,21 +572,9 @@ def main(argv=None,prepared=None):
                     print(record['reason'],flush=True)
                 atomic_json(run/'held_handoff.json',diagnostics)
             if record.get('status')=='placed':
-                from .prepare import ready_after_place
-                record['auto_prepare_allowed']=bool(handoff_ok and not (run/'stop').exists())
-                # Validate AFTER the SYNC-to-hold handoff, not just at the last
-                # commanded endpoint. Failed/cancelled runs never become ready.
-                try:
-                    if not handoff_ok or (run/'stop').exists():raise ValueError('保持交接未确认或用户停止')
-                    fresh=await_loaded_pose(node.snapshot,spin,lambda:node._feedback_monotonic,
-                        record['q'],'放置后准备确认','place',time.monotonic,lambda d:None,arm=arm,require_jaw_stable=False)
-                    if ready_after_place(cfg,fresh):
-                        atomic_json(run/'prepare_result.json',dict(status='prepared',q=fresh,
-                            token=uuid.uuid4().hex,time=time.monotonic(),source='placed_return'))
-                        record['prepared_after_place']=True
-                except Exception as exc:
-                    record['preparation_note']=str(exc)
-                    record['auto_prepare_allowed']=False
+                # 已完成松爪与退离。保持交接由上方共同执行；不额外复位或补做准备。
+                record.update(auto_prepare_allowed=False,prepared_after_place=False,
+                              placement_completion=plan.get('placement_completion','withdraw_hold'))
             node.destroy_node()
         if base_guard is not None:base_guard.close()
         if rclpy.ok():rclpy.shutdown()

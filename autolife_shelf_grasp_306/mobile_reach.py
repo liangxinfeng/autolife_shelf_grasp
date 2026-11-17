@@ -232,10 +232,13 @@ def grasp_reposition(pool,q,point,product,cfg,anchor,cloud,stopped,on_status,obs
         arm_point,_=observation(side,c) if observation else (point,product)
         center=np.asarray(arm_point)+np.asarray(c.get('target_offset_torso_mm',[0,0,0]))/1000
         shoulder,radius=arm_envelope(pool.fk,q,tcp,side)
-        if not needs_base(center,shoulder,radius,pool.fk,q,c):return None
+        radius+=waist_allowance(pool.fk,q,shoulder,c)
+        if np.linalg.norm(center-shoulder)<=radius+1e-9:return None
         delta=workspace_translation(center,shoulder,radius,ground[:3,:3])
         if delta is not None and not np.any(delta):return None  # 范围内保留原规划。
         if delta is not None:choices.append((float(np.linalg.norm(delta)),delta,side,c,arm_point,radius))
+    if not choices:
+        raise ValueError('目标超出原地腰臂范围，单次15厘米水平补偿仍不足或目标高度不适合；未启动无效抓取规划，请调整停靠点或身体高度')
     for distance,delta,side,c,arm_point,radius in sorted(choices,key=lambda v:v[0]):
         context.checkpoint();on_status(f'识别可达判断：建议{direction_text(delta)}，正在核对底盘通道…')
         p=pool.native_planner(c,context);boxes=collision_boxes(p,q)
@@ -245,7 +248,7 @@ def grasp_reposition(pool,q,point,product,cfg,anchor,cloud,stopped,on_status,obs
         result.update(body_boxes=boxes,decision_stage='recognition_workspace',reach_checked=True,
             path_checked=False,workspace_radius_m=radius)
         return result
-    return None
+    raise ValueError('目标需要底盘补偿，但当前补偿通道存在障碍；未启动原地抓取规划')
 
 
 def place_reposition(planner,q,tcp,grasp,points,table,settings,anchor,cloud,stopped,on_status):
@@ -259,14 +262,16 @@ def place_reposition(planner,q,tcp,grasp,points,table,settings,anchor,cloud,stop
     points=np.asarray(points);up=ground[:3,:3].T@np.array([0.,0.,1.])
     centers=points@inv[:3,:3].T+inv[:3,3]+up*(carried_height(grasp['product'])/2+settings['place_clearance_m'])
     shoulder,radius=arm_envelope(planner.fk,q,tcp,planner.cfg['arm'])
+    radius+=waist_allowance(planner.fk,q,shoulder,planner.cfg)
     choices=[]
     offset=np.asarray(planner.cfg.get('target_offset_torso_mm',[0,0,0]))/1000
     for index,center in enumerate(centers):
-        if not needs_base(center+offset,shoulder,radius,planner.fk,q,planner.cfg):return None
+        if np.linalg.norm(center+offset-shoulder)<=radius+1e-9:return None
         delta=workspace_translation(center+offset,shoulder,radius,ground[:3,:3])
         if delta is not None and not np.any(delta):return None
         if delta is not None:choices.append((float(np.linalg.norm(delta)),index,delta))
-    if not choices:return None
+    if not choices:
+        raise ValueError('放置候选超出原地腰臂范围，单次15厘米水平补偿仍不足或高度不适合；请调整停靠点或身体高度')
     boxes=collision_boxes(planner,q)
     from autolife_handeye_calibration_306.verification_core import wrist_frame
     wrist=planner.fk.fk('Link_Zero_Point',wrist_frame(planner.cfg),q)
@@ -282,26 +287,50 @@ def place_reposition(planner,q,tcp,grasp,points,table,settings,anchor,cloud,stop
         result=proposal('place',delta,q,anchor,points[index],planner.cfg['arm'],0,time.monotonic()-started)
         result.update(body_boxes=boxes,held_box=held,decision_stage='recognition_workspace',reach_checked=True,path_checked=False)
         return result
-    return None
+    raise ValueError('放置需要底盘补偿，但当前补偿通道存在障碍；未启动原地放置规划')
 
 
-def select_after_move(chosen,fresh,frame,T_ground,cfg,reference,anchor):
+def select_after_move(chosen,fresh,frame,T_ground,cfg,reference,anchor,request=None):
     """按实测底盘位移预测物体位置，避免用移动前2D重叠率误拒绝。"""
     from .bottle import object_points
     expected=map_point(reference['target_base'],reference['base_anchor'],anchor)
-    candidates=[]
+    prediction='odometry_reprojection'
+    if reference.get('arrival_map_pose') is not None and reference.get('source_map_pose') is not None:
+        expected=map_point(reference['target_base'],reference['source_map_pose'],reference['arrival_map_pose'])
+        prediction='localized_map_reprojection'
+    candidates=[];diagnostics=[]
+    def semantic_match(item):
+        import re
+        # 任务识别已经使用本任务专用提示词；无需再用旧视角特征作为硬门槛。
+        if request and request.get('semantic'):return True
+        old=set(re.findall(r'[a-z]+',str(chosen.get('semantic_label','')).lower()))
+        new=set(re.findall(r'[a-z]+',str(item.get('semantic_label','')).lower()))
+        containers={'box','pack','bag','bottle','cup','can'}
+        if old&containers != new&containers:return False
+        generic={'white','black','red','blue','green','small','large','object','crumpled','plastic'}
+        return bool((old-generic)&(new-generic))
     for item in fresh:
-        if chosen.get('product') and item.get('product') and chosen['product']['id']!=item['product']['id']:continue
-        try:points,_,_=object_points(frame,item['mask'],T_ground,cfg)
-        except (ValueError,KeyError):continue  # 一个候选没有深度，不应阻止其他有效候选。
+        row=dict(id=item.get('id'),label=item.get('semantic_label',''));diagnostics.append(row)
+        if chosen.get('product') and item.get('product') and chosen['product']['id']!=item['product']['id']:
+            row['reason']='different_catalog_product';continue
+        try:points,_,_=object_points(frame,item['mask'],T_ground,cfg,dense=False)
+        except (ValueError,KeyError) as exc:
+            row['reason']=str(exc);continue
         if len(points)<20:continue
         center=np.median(points,axis=0);error=float(np.linalg.norm(center-expected))
-        a=np.asarray(chosen['feature']);b=np.asarray(item['feature'])
+        a=np.asarray(chosen.get('feature',[]));b=np.asarray(item.get('feature',[]))
         similarity=float(a@b/max(1e-12,np.linalg.norm(a)*np.linalg.norm(b))) if a.shape==b.shape else 0.
-        if error<.06 and similarity>.65:candidates.append((error,item))
+        semantic=semantic_match(item)
+        # 换视角后中心会偏移；用当前真实深度和任务语义关联，外观仅辅助排序。
+        # 大幅位置冲突和多个不可区分实例仍不能冒充原物品。
+        accepted=bool(np.isfinite(error) and ((semantic and error<.30) or (error<.12 and similarity>.65)))
+        row.update(position_error_m=error,similarity=similarity,semantic_match=semantic,accepted=accepted)
+        if accepted:candidates.append((error+.015*(1.-max(0.,similarity)),item,error))
     candidates.sort(key=lambda v:v[0])
-    if not candidates or len(candidates)>1 and candidates[1][0]-candidates[0][0]<.02:
-        raise ValueError('底盘到位后目标关联不唯一，请重新选择物品；未执行旧轨迹')
-    error,winner=candidates[0]
+    if not candidates:
+        return None,dict(method=prediction,reason='底盘到位后未找到任务目标的有效当前深度',expected_base=expected.tolist(),candidates=diagnostics)
+    if len(candidates)>1 and candidates[1][0]-candidates[0][0]<.02:
+        return None,dict(method=prediction,reason='底盘到位后有多个位置接近的同类物品，需明确选择目标',expected_base=expected.tolist(),candidates=diagnostics)
+    _,winner,error=candidates[0]
     return {**winner,'id':chosen['id'],'product':chosen.get('product'),'name':chosen.get('name',winner.get('name',''))},dict(
-        method='odometry_reprojection',selected_id=chosen['id'],position_error_m=error)
+        method=prediction,selected_id=chosen['id'],position_error_m=error,expected_base=expected.tolist(),candidates=diagnostics)
