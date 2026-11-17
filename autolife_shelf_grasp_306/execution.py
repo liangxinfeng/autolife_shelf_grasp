@@ -173,8 +173,11 @@ def main(argv=None,prepared=None):
         motion_now=node.task_pause.now
         source=plan['source_q']
         # 并行张爪是本执行器已授权的动作，不能误算为手臂起点漂移。
+        parallel_grasp_opening=bool(prepared is not None and vendor_grasp and
+            prepared.get('kind')=='grasp' and prepared.get('token') and
+            plan.get('parallel_prepare_token')==prepared['token'])
         compare_source=({n:v for n,v in source.items() if 'Gripper' not in n}
-            if prepared is not None and vendor_grasp else source)
+            if parallel_grasp_opening else source)
         handoff_diagnostics={}
         def check_start_pose(stage):
             def save(diagnostic):handoff_diagnostics[stage]=diagnostic
@@ -294,7 +297,18 @@ def main(argv=None,prepared=None):
             if arm_reset_active:
                 fixed=BODY+NECK+[gripper_name(other)]
                 fixed_source={**plan['arms_reset']['source_q'],gripper_name(other):source[gripper_name(other)]}
-            if fixed and max(abs(q[n]-fixed_source[n]) for n in fixed)>.7:raise ValueError('固定身体/另一侧关节已移动')
+            # 与起点交接共用同一规则：并行准备已张开双爪，另一夹爪也不是固定关节。
+            # 只排除本会话主动张开的夹爪，不改写身体/另一手臂参考或已检查轨迹。
+            if parallel_grasp_opening:fixed=[n for n in fixed if n!=gripper_name(other)]
+            if fixed:
+                joint=max(fixed,key=lambda n:abs(q[n]-fixed_source[n]))
+                delta=abs(q[joint]-fixed_source[joint])
+                if delta>.7:
+                    atomic_json(run/'fixed_joint_check.json',dict(plan_id=plan.get('plan_id'),joint=joint,
+                        reference=fixed_source[joint],actual=q[joint],delta=delta,
+                        parallel_grasp_opening=parallel_grasp_opening))
+                    raise ValueError(f'固定身体/另一侧关节已移动：{joint} 偏差{delta:.2f}，'
+                        f'参考{fixed_source[joint]:.2f}，当前{q[joint]:.2f}')
             if observing and abs(q[jaw]-plan['held_gripper_deg'])>8:
                 raise ValueError('观察期间夹爪状态改变，已停止抬手')
             if (placing or observing) and plan.get('placement_mode')=='standalone' and not released:

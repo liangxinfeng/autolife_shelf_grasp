@@ -305,8 +305,8 @@
     },
     {
       "path": "autolife_shelf_grasp_306/execution.py",
-      "sha256": "3525e01778a56b320f45aee26c021a0438238d38a0d8d3452a369b5a31805413",
-      "size": 40642,
+      "sha256": "24e6627bd2b289b63e83321fda8f53e027ad65a2ffc3458be508e462aabec03c",
+      "size": 41663,
       "mode": "0o644"
     },
     {
@@ -2378,6 +2378,12 @@
       "sha256": "118ba602bd1b0a0964d6d149d095f0825231613218faf7b38f08b35742e72e17",
       "size": 33399,
       "mode": "0o644"
+    },
+    {
+      "path": "test/test_parallel_fixed_joints.py",
+      "sha256": "9d601934e702e0294dc406110bb7c3adc1c68525715802b16ddaf2ec128993c0",
+      "size": 4909,
+      "mode": "0o644"
     }
   ],
   "excluded": [
@@ -2386,5 +2392,17 @@
     ".pytest_cache/",
     "autolife_shelf_grasp_306/__pycache__/",
     "test/__pycache__/"
+  ],
+  "updates": [
+    {
+      "date": "2026-11-17",
+      "parent_commit": "6ecff058400d294b26e7c4c1717ff6bf1b221eac",
+      "reason": "并行准备张开双爪与固定关节检查规则统一",
+      "files": [
+        "autolife_shelf_grasp_306/execution.py",
+        "test/test_parallel_fixed_joints.py"
+      ],
+      "validation": "430 passed, 3 previously deselected; no-motion recorded-state replay; formal import verified"
+    }
   ]
 }
