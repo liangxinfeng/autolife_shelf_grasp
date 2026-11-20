@@ -88,3 +88,21 @@ def test_full_body_and_limits_required():
     with pytest.raises(ValueError):compile_action(draft([q]))
     q=pose(Joint_Right_Shoulder_Inner=400)
     with pytest.raises(ValueError):compile_action(draft([q]))
+
+
+def test_library_cache_observes_exact_content_and_returns_independent_documents(tmp_path,monkeypatch):
+    from autolife_shelf_grasp_306.teaching_library import TeachingLibrary
+    from unittest.mock import Mock
+    import yaml
+    library=TeachingLibrary(tmp_path)
+    library.path.write_text('actions: {}\nversion: 1\n')
+    parse=Mock(wraps=yaml.safe_load);monkeypatch.setattr(yaml,'safe_load',parse)
+    library.read()['actions']['external']={}
+    assert library.read()['actions']=={} and parse.call_count==1
+    library.path.write_text('actions: {}\nversion: 2\n')
+    assert library.read()['version']==2 and parse.call_count==2
+    library.path.write_text('actions: []\n')
+    with pytest.raises(ValueError):library.read()
+    library.path.write_text('actions: {}\nversion: 2\n')
+    assert library.read()['version']==2
+

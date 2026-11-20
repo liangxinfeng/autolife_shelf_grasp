@@ -1,4 +1,4 @@
-"""把原厂IK留在原厂Python环境，避免感知环境的Pinocchio/KDL二进制冲突。
+"""原厂IK使用独立计算进程；解释器可明确配置，默认沿用当前Python。
 
 协议只接受FK/IK数值计算，完全不导入或创建机器人控制器。
 """
@@ -12,14 +12,29 @@ import sys
 import time
 
 
+class NoIKSolution(ValueError):
+    """Vendor solver finished its configured numerical search without a bounded pose."""
+
+
+class VendorSolverExited(ValueError):
+    """The computation process disappeared before returning an FK/IK result."""
+    def __init__(self,pid,returncode,kind,values):
+        self.details=dict(pid=pid,returncode=returncode,kind=kind,inputs=values)
+        super().__init__(f'原厂计算进程退出（请求 {kind}，PID {pid}，退出码 {returncode}），本次求解结果未知')
+
+
 class VendorIKProcess:
     def __init__(self, cfg, model, base, tip, locked, checkpoint=lambda:None):
         self.checkpoint=checkpoint;self._closed=False
-        python = Path(cfg['vendor_python_path']).parents[2]/'bin/python'
+        python = Path(cfg.get('vendor_python') or sys.executable)
         if not python.is_file():
             raise ValueError('原厂IK Python不存在：'+str(python))
         env = dict(os.environ)
-        env.pop('PYTHONPATH', None)
+        env['PYTHONFAULTHANDLER']='1'
+        # Preserve explicitly supplied package search paths in the child. Do
+        # not infer an interpreter from the site-packages directory layout.
+        paths=[cfg.get('vendor_python_path')]+list(sys.path)
+        env['PYTHONPATH']=os.pathsep.join(dict.fromkeys(str(p) for p in paths if p))
         env['LD_LIBRARY_PATH'] = ':'.join(v for v in env.get('LD_LIBRARY_PATH','').split(':')
             if v and '/s3_perception/' not in v)
         self.process = subprocess.Popen([str(python), '-u', str(Path(__file__).resolve()),
@@ -29,6 +44,9 @@ class VendorIKProcess:
             ready = self.read(15.)
             if ready != {'ready': True}:
                 raise ValueError('原厂IK启动协议错误')
+        except EOFError as exc:
+            error=self.exit_error('startup',dict(locked=locked))
+            self.close();raise error from exc
         except Exception:
             self.close();raise
 
@@ -39,16 +57,34 @@ class VendorIKProcess:
             if select.select([self.process.stdout],[],[],min(.05,max(0.,deadline-time.monotonic())))[0]:break
             if time.monotonic()>=deadline:raise ValueError('原厂IK计算超时')
         line = self.process.stdout.readline()
-        if not line:
-            raise ValueError('原厂IK计算进程退出；未生成运动目标')
+        if not line:raise EOFError('原厂计算进程没有返回结果')
         response = json.loads(line)
+        if response.get('no_solution'):raise NoIKSolution(response['error'])
         if 'error' in response:raise ValueError(response['error'])
         return response
 
     def request(self, kind, **values):
-        self.process.stdin.write(json.dumps(dict(kind=kind, **values))+'\n')
-        self.process.stdin.flush()
-        return self.read(5.)['result']
+        try:
+            self.process.stdin.write(json.dumps(dict(kind=kind, **values))+'\n')
+            self.process.stdin.flush()
+            return self.read(5.)['result']
+        except NoIKSolution:
+            raise  # A complete response; the next request can reuse this solver.
+        except (EOFError,BrokenPipeError,ConnectionResetError) as exc:
+            error=self.exit_error(kind,values)
+            self.close();raise error from exc
+        except BaseException:
+            # The protocol is ordered. A late reply to a cancelled/timed-out
+            # request cannot be consumed as the answer to the next FK or IK.
+            self.close()
+            raise
+
+    def exit_error(self,kind,values):
+        code=self.process.poll()
+        if code is None:
+            # Capture the child's exit status before cleanup can send SIGTERM.
+            with contextlib.suppress(subprocess.TimeoutExpired):code=self.process.wait(timeout=.05)
+        return VendorSolverExited(self.process.pid,code,kind,values)
 
     def close(self):
         if self._closed:return
@@ -58,7 +94,8 @@ class VendorIKProcess:
             p.terminate()
             try:p.wait(timeout=2.)
             except subprocess.TimeoutExpired:p.kill();p.wait(timeout=2.)
-        p.stdin.close();p.stdout.close()
+        with contextlib.suppress(OSError):p.stdin.close()
+        p.stdout.close()
 
 
 def worker():
@@ -71,13 +108,21 @@ def worker():
         from scipy.spatial.transform import Rotation
         import math
         model, base, tip, initial_locked = sys.argv[1:]
-        allowed=set(json.loads(initial_locked))
-        def build(locked):
-            if set(locked)!=allowed or any(not math.isfinite(float(v)) or abs(float(v))>360 for v in locked.values()):
+        initial_locked=json.loads(initial_locked)
+        allowed=set(initial_locked)
+        solver=None;configuration=None
+        def configure(locked):
+            nonlocal solver,configuration
+            angles={name:float(value) for name,value in locked.items()}
+            if set(angles)!=allowed or any(not math.isfinite(v) or abs(v)>360 for v in angles.values()):
                 raise ValueError('固定关节配置无效')
-            tree = ET.parse(model)
+            # Reuse only the compiled chain. The caller still verifies each new
+            # source pose by FK, and supplies the seed, bounds and target on every IK.
+            current=(Path(model).read_bytes(),angles)
+            if current==configuration:return
+            tree=ET.ElementTree(ET.fromstring(current[0]))
             # 固定关节仍保留实测转角对应的完整安装变换，避免给IK多余自由度。
-            for name, angle in locked.items():
+            for name, angle in angles.items():
                 joint=tree.getroot().find(f"joint[@name='{name}']")
                 origin=joint.find('origin')
                 if origin is None:origin=ET.SubElement(joint,'origin',xyz='0 0 0',rpy='0 0 0')
@@ -88,15 +133,16 @@ def worker():
                 joint.set('type','fixed')
             with tempfile.TemporaryDirectory(prefix='vendor_ik_fixed_') as tmp:
                 path=Path(tmp)/'fixed.urdf';tree.write(path)
-                return KdlSolver(str(path), [base], [tip])
-        solver=build(json.loads(initial_locked))
+                solver=KdlSolver(str(path), [base], [tip])
+            configuration=current
+        configure(initial_locked)
     print(json.dumps({'ready':True}),flush=True)
     for line in sys.stdin:
         try:
             request = json.loads(line)
             with contextlib.redirect_stdout(sys.stderr):
                 if request['kind']=='configure':
-                    solver=build(request['locked']);result=[]
+                    configure(request['locked']);result=[]
                 elif request['kind']=='fk':
                     result = solver.fk([base],[tip],[np.asarray(request['q'])])[0]
                 elif request['kind']=='ik':
@@ -104,22 +150,20 @@ def worker():
                     solutions = solver.ik([base],[tip],[request['pose']],[seed],
                         ik_pos_solver_type='nr_jl',kwargs_ik_pos={
                             'q_min':lower,'q_max':upper,'maxiter':250,'eps':1e-5})
-                    if solutions:
-                        result=solutions[0]
-                    else:
-                        # 同一目标的原厂LMA数值解，不改变抓点或放宽限位。
-                        solutions=solver.ik([base],[tip],[request['pose']],[seed],
-                            ik_pos_solver_type='lma',kwargs_ik_pos={'maxiter':500,'eps':1e-5})
-                        if not solutions:raise ValueError('原厂NR/LMA均未找到此位姿的解')
-                        result=np.asarray(solutions[0])
-                        result=seed+(result-seed+np.pi)%(2*np.pi)-np.pi
-                        if np.any(result<lower-1e-6) or np.any(result>upper+1e-6):
-                            raise ValueError('原厂LMA解超出腰臂限位')
+                    # The caller can recover a bounded seed and ask NR_JL again.
+                    # The SDK's unconstrained LMA fallback crashed on a field target.
+                    if not solutions:raise NoIKSolution('原厂有界逆解未收敛')
+                    result=solutions[0]
                 else:raise ValueError('仅支持无动作FK/IK')
             response = {'result':list(map(float,result))}
+        except NoIKSolution as exc:
+            response={'no_solution':True,'error':str(exc)}
         except Exception as exc:
             response = {'error':str(exc)}
         print(json.dumps(response,allow_nan=False),flush=True)
 
 
-if __name__=='__main__':worker()
+if __name__=='__main__':
+    try:worker()
+    except ImportError as exc:
+        print(json.dumps({'error':'原厂IK依赖不可用：'+str(exc)},ensure_ascii=False),flush=True)

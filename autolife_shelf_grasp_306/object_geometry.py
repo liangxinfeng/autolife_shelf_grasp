@@ -4,18 +4,42 @@ from .bottle import object_points,horizontal_basis,image_cropped,DepthQualityErr
 from .core import unit
 
 
-def solid_center(points,up,product,camera):
+def measured_relief(points):
+    """A depth-varying single plane still represents only a single surface."""
+    p=np.asarray(points,float)
+    local=p-np.mean(p,axis=0)
+    _,axes=np.linalg.eigh(local.T@local/len(p))
+    coordinates=local@axes
+    plane=coordinates[:,1:]
+    low,high=np.percentile(plane,[1,99],axis=0)
+    cells=np.clip(((plane-low)/np.maximum(high-low,1e-6)*5).astype(int),0,4)
+    ids=cells[:,0]*5+cells[:,1]
+    # A noisy tilted wall has nearly identical cell medians after subtracting
+    # its plane. Real surface relief stays spatially coherent.
+    patches=[np.median(coordinates[ids==i,0]) for i in np.flatnonzero(np.bincount(ids,minlength=25)>=4)]
+    return len(patches)>=3 and float(np.ptp(np.percentile(patches,[10,90])))>.004
+
+
+def front_contact(points,up,thickness,camera):
     p=np.asarray(points,float);u,v,n=horizontal_basis(up)
     z=p@n;lo,hi=np.percentile(z,[1,99]);span=hi-lo
     if span<.025:raise DepthQualityError('可见物体有效深度高度不足25mm')
     middle=p[(z>=lo+.25*span)&(z<=lo+.75*span)]
-    if len(middle)<40:raise ValueError('物体中央有效深度不足')
-    xy=np.column_stack([middle@u,middle@v]);surface=np.median(xy,axis=0)
-    away=unit(surface-np.array([camera@u,camera@v]))
-    center_xy=surface+away*float(product['depth_m'])/2
+    if len(middle)<40:raise DepthQualityError('物体中央有效深度不足')
+    xy=np.column_stack([middle@u,middle@v]);mid=np.median(xy,axis=0)
+    away=unit(mid-np.array([camera@u,camera@v]))
+    side=np.array([-away[1],away[0]]);across=xy@side
+    left,right=np.percentile(across,[2,98]);middle_line=(left+right)/2
+    strip=np.abs(across-middle_line)<max(.002,(right-left)*.22)
+    if not np.any(strip):raise DepthQualityError('当前夹取区中央缺少实测深度')
+    center_xy=side*middle_line+away*(np.median(xy[strip]@away)+float(thickness)/2)
     center=center_xy[0]*u+center_xy[1]*v+(lo+hi)*.5*n
-    return center,{'observed_height_mm':float(span*1000),'geometry':'solid',
-        'center_source':'visible_midpoint_plus_user_thickness','points':len(p)}
+    return center,{'observed_height_mm':float(span*1000),'points':len(p)}
+
+
+def solid_center(points,up,product,camera):
+    center,stats=front_contact(points,up,product['depth_m'],camera)
+    return center,dict(stats,geometry='solid',center_source='visible_midpoint_plus_user_thickness')
 
 
 def bag_edge_target(points,pixels,point,up,product,camera):
@@ -38,7 +62,7 @@ def estimate_object(frame,mask,T,up,product,cfg,grasp_pixel=None):
     if not (.015<=w<=(.35 if bag else .09) and 0<h<=.4 and
             (.001 if bag else .005)<=d<=(.02 if bag else .15)):
         raise ValueError('物品尺寸配置无效')
-    points,pixels,_=object_points(frame,mask,T,cfg)
+    points,pixels,_=object_points(frame,mask,T,cfg,False)
     if product.get('geometry')=='bag_edge':
         if grasp_pixel is None:raise ValueError('请先在图像中选择袋口实体边缘夹取点')
         return bag_edge_target(points,pixels,grasp_pixel,up,product,T[:3,3])

@@ -93,7 +93,8 @@ def test_contact_collision_allows_another_attitude():
     assert not VendorGraspPlanner.grasp_attitude_feasible(p,{},np.zeros(3),np.ones(3),np.eye(3),{})
 
 
-def test_full_prechecked_route_uses_saved_geometry_and_still_checks_transit(monkeypatch):
+@pytest.mark.parametrize('target_x',[.25,.85])
+def test_full_prechecked_route_uses_saved_geometry_and_still_checks_transit(monkeypatch,target_x):
     p=planning.Planner.__new__(planning.Planner);p.names=list('abcdefg')
     p.cfg={'arm':'left','gripper_max_width_m':.15,'approach_yaw_deg':0.,'up_torso':[0,0,1],
            'T_wrist_tool_quat_xyzw':[0,0,0,1],'pregrasp_m':.1,'lift_m':.03,'withdraw_m':.15,
@@ -105,7 +106,7 @@ def test_full_prechecked_route_uses_saved_geometry_and_still_checks_transit(monk
     def solve(seed,tool,point,*a,**kw):
         seeds.append(dict(seed));return {**seed,**dict(zip('abc',point))}
     p.solve=solve
-    source={n:0. for n in p.names};tcp=np.zeros(3);center=np.array([.25,0,0]);product={'diameter_m':.07}
+    source={n:0. for n in p.names};tcp=np.zeros(3);center=np.array([target_x,0,0]);product={'diameter_m':.07}
     geometry=p.route_geometry(source,tcp,center,product,False)
     saved={**source,'a':float(geometry[15][0][1][0]),'g':4.}
     p._active_reach_candidate={'yaw_offset_deg':0.,'geometry':geometry,'key_poses':{0:saved}}

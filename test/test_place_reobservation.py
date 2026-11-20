@@ -52,3 +52,4 @@ def test_retry_is_bounded_and_only_for_clutter_rejections():
     assert not retryable_placement_error(diag,2)
     assert not retryable_placement_error([dict(error='机器人自碰撞')],0)
     assert not retryable_placement_error([dict(error='位置误差8mm')],0)
+    assert not retryable_placement_error(diag+[dict(error='机器人自碰撞')],0)

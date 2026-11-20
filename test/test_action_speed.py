@@ -88,7 +88,8 @@ def test_task_save_retry_and_actual_dispatch(monkeypatch):
     r=compile_action(compose('x',rows(),50));saved=deepcopy(r);sent=[]
     c=Cursor(dict(steps=[dict(kind='action',target='x',action_speed_percent=90,execution_arm='left')]))
     c.stop('test');c.retry()
-    w=NS(owner=NS(studio=NS(execute=lambda *a,**k:sent.append((a,k)))),actions={'x':r},cursor=c,action_hold_grippers=True)
+    w=NS(owner=NS(studio=NS(execute=lambda *a,**k:sent.append((a,k)))),actions={'x':r},cursor=c,
+        action_hold_grippers=True,mark_dispatch=c.dispatch)
     Workflow.start_fixed_action(w)
     out=sent[0][0][1]
     assert out['speed_percent']==90 and out['retarget_arm']=='left'

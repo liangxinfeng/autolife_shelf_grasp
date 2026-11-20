@@ -1,44 +1,19 @@
 {
-  "robot_id": 345,
+  "robot_id": 367,
   "hardware": "dm_type1",
-  "measured": true,
-  "measured_date": "2026-11-02",
+  "measured": false,
+  "calibration_mode": "reference",
   "width_definition": "empty gripper inner clear opening in millimeters",
   "position_basis": "commanded_vendor_position",
   "feedback_positions_recorded": false,
-  "provenance": "User corrected both maximum openings on 2026-11-06: command10 -> 90mm. Earlier measured 180 ->45mm and330 ->5mm retained; interpolated widths are estimates.",
+  "provenance": "Operator authorized robot367 to use the robot345 DM Type1 curve as a reference on 2026-11-18. This curve has not been measured on robot367; interpolated widths are estimates.",
+  "reference_accepted": true,
+  "source_robot_id": 345,
+  "reference_accepted_date": "2026-11-18",
+  "source_sha256": "b72c02a8675171a8817ea3298b139e6ce334233ecf129160c6d1103eaf5452e0",
   "arms": {
-    "left": [
-      [
-        5,
-        330
-      ],
-      [
-        45,
-        180
-      ],
-      [
-        90,
-        10
-      ]
-    ],
-    "right": [
-      [
-        5,
-        330
-      ],
-      [
-        45,
-        180
-      ],
-      [
-        90,
-        10
-      ]
-    ]
+    "left": [[5, 330], [45, 180], [90, 10]],
+    "right": [[5, 330], [45, 180], [90, 10]]
   },
-  "max_opening_correction": {
-    "date": "2026-11-06",
-    "source": "用户更正：左右最大净开口90mm，之前95mm口述有误；中间45mm、近闭合5mm未重新测量，保持原记录。"
-  }
+  "maximum_opening_mm": 90
 }

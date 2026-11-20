@@ -2,6 +2,13 @@
 import math
 
 
+def head_pitch_limits():
+    """Display uses positive downward; the driver uses the opposite sign."""
+    from control_center_joint_control.joint_definitions import JOINT_LIMITS
+    lo,hi=JOINT_LIMITS['Joint_Neck_Pitch']
+    return -hi,-lo
+
+
 def normalize(value):
     if value is None:return None
     if not isinstance(value,dict):raise ValueError('步骤姿态格式无效')
@@ -14,7 +21,8 @@ def normalize(value):
     if pitch is not None:
         if isinstance(pitch,bool):raise ValueError('头部角度应填写度数')
         pitch=float(pitch)
-        if not math.isfinite(pitch) or not -30<=pitch<=45:raise ValueError('头部角度应在-30～45°内（正数俯视）')
+        lo,hi=head_pitch_limits()
+        if not math.isfinite(pitch) or not lo<=pitch<=hi:raise ValueError(f'头部角度应在{lo:g}～{hi:g}°内（正数俯视）')
     if mode=='keep' and pitch is None:return None
     return dict(body_mode=mode,lowering_cm=height if mode not in ('keep','recorded') else 0.,head_pitch_deg=pitch)
 

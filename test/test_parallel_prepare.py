@@ -17,7 +17,7 @@ def config(tmp_path):
 
 
 @pytest.mark.parametrize('kind',['grasp','place'])
-@pytest.mark.parametrize('fault',[None,'stop','blocked','wrong_plan','pause','mobile'])
+@pytest.mark.parametrize('fault',[None,'stop','blocked','wrong_plan','pause','mobile','handoff_crash'])
 def test_preparation_process_single_lease_and_handoff(monkeypatch,tmp_path,kind,fault):
     import yaml,rclpy
     from autolife_shelf_grasp_306 import execution as e
@@ -58,7 +58,7 @@ def test_preparation_process_single_lease_and_handoff(monkeypatch,tmp_path,kind,
                 (tmp_path/'mobile_reach_control.json').write_text(json.dumps(dict(prepare_token='T',operation='reacquire_base')))
                 events.append('returned')
             elif state.get('status')=='ready' and 'returned' in events:
-                (tmp_path/'parallel_prepare_execute.json').write_text(json.dumps(dict(token='T',filename='plan.json',plan_id='P',product_id='O')))
+                (tmp_path/'parallel_prepare_execute.json').write_text(json.dumps(dict(token='T',filename='plan.json',plan_id='P',product_id='O',execution_id='E')))
         def close(self,**kw):events.append(('close',kw))
     class Base:
         def __init__(self,n):self.last=[100,0,0,0,0,0]
@@ -78,21 +78,27 @@ def test_preparation_process_single_lease_and_handoff(monkeypatch,tmp_path,kind,
     monkeypatch.setattr(feedback_refresh,'refresh',lambda *a:dict(q));monkeypatch.setattr(feedback_refresh,'await_snapshot',lambda *a:None)
     monkeypatch.setattr(pose_manual_session,'ManualHoldSession',Session);monkeypatch.setattr(demo_protocol,'StationaryBaseGuard',Base)
     handoff=[]
-    monkeypatch.setattr(e,'main',lambda argv,prepared:handoff.append((argv,prepared)))
+    def execute(argv,prepared):
+        if fault=='handoff_crash':raise RuntimeError('executor failed before taking ownership')
+        handoff.append((argv,prepared))
+    monkeypatch.setattr(e,'main',execute)
     (tmp_path/'plan.json').write_text(json.dumps(dict(parallel_prepare_token='wrong' if fault=='wrong_plan' else 'T',kind='place' if kind=='place' else 'grasp')))
-    (tmp_path/'parallel_prepare_execute.json').write_text(json.dumps(dict(token='T',filename='plan.json',plan_id='P',product_id='O')))
+    (tmp_path/'parallel_prepare_execute.json').write_text(json.dumps(dict(token='T',filename='plan.json',plan_id='P',product_id='O',execution_id='E')))
     monkeypatch.setattr(sys,'argv',['prepare','--root',str(tmp_path),'--run',str(tmp_path),'--token','T','--kind',kind])
     if fault=='mobile':(tmp_path/'parallel_prepare_execute.json').unlink()
     p.main()
     if fault=='mobile':assert events.count('base_close')==1 and 'returned' in events
-    failed=fault in ('stop','wrong_plan')
+    failed=fault in ('stop','wrong_plan','handoff_crash')
     # 放置没有张爪时间，stop/pause注入需在交接前发生才适用。
     if kind=='place' and fault=='stop':failed=False
     assert bool(handoff)!=failed
     assert events.count('enable')==1 and events.count('init')==1
     if kind=='place':assert not commands and q=={'Joint_Left_Gripper':300.,'Joint_Right_Gripper':220.}
-    if failed:assert 'destroy' in events and any(isinstance(x,tuple) and x[0]=='close' for x in events)
+    if failed:
+        assert 'destroy' in events and any(isinstance(x,tuple) and x[0]=='close' for x in events)
+        assert json.loads((tmp_path/'execution_result.json').read_text())['execution_id']=='T'
     else:
+        assert handoff[0][0][-2:]==['--execution-id','E']
         assert handoff[0][1]['node'] is node and handoff[0][1]['session'].active
         if kind=='grasp' and fault!='pause':assert ('hold',['grippers']) not in events
         assert 'destroy' not in events and not any(isinstance(x,tuple) and x[0]=='close' for x in events)
@@ -107,9 +113,9 @@ def test_actual_session_reuse_never_enables_again():
     import textwrap
     from autolife_shelf_grasp_306 import execution
     source=Path(execution.__file__).read_text();a=source.index("        mark('enable_requested')");b=source.index('        if native_motion:\n            response=node.enable_planned_waist',a)
-    events=[];env=dict(prepared={'token':'T'},session=NS(tick=lambda:events.append('tick')),spin=lambda:events.append('spin'),mark=lambda x:events.append(x))
+    events=[];env=dict(prepared={'token':'T'},session=NS(tick=lambda:events.append('tick')),spin=lambda:events.append('spin'),mark=lambda x:events.append(x),execution_progress=execution.ExecutionProgress())
     exec(textwrap.dedent(source[a:b]),env)
-    assert events==['enable_requested','spin','tick','enable_ready','sync_ready']
+    assert events==['enable_requested','spin','enable_ready','sync_ready']
 
 
 @pytest.mark.parametrize('order',['vision_first','enable_first'])
@@ -140,7 +146,8 @@ def test_prepared_opening_reuses_measured_clearance_without_wait(tmp_path):
     state['minimum_opening_mm']=89.19730813966091
     assert ns['finish_gripper'](state)=='opening_clear'  # 真实故障:89.15mm反馈，不应被0.05mm差拦住
     state['minimum_opening_mm']=89.9
-    with pytest.raises(ValueError,match='受阻'):ns['finish_gripper'](state)
+    ns['plan']={'grasp_width_m':.084}
+    assert ns['finish_gripper'](state)=='opening_command_complete_unverified'
 
 
 @pytest.mark.parametrize('placing',[False,True])
@@ -149,10 +156,12 @@ def test_actual_ui_launch_reuses_preparation_process(tmp_path,placing):
     submissions=[]
     data=dict(filename='plan.json',plan_id='P',target=dict(instance_id=1,product_id='O'))
     fake=NS(cancel_pending=False,run=tmp_path,root=tmp_path,demo_active=False,placement_active=placing,demo_phase='place',
-        pending_plan=data,selected_id=lambda:1,parallel_prepare=NS(submit=lambda *a:submissions.append(a)))
+        pending_plan=data,selected_id=lambda:1,parallel_prepare=NS(submit=lambda *a,**kw:submissions.append((a,kw))),
+        workflow=NS(phase='place' if placing else 'grasp',mark_dispatch=lambda phase:None))
     placement=dict(plan_id='P',product_id='O') if placing else None
     Window.launch_motion(fake,'plan.json',placement=placement)
-    assert submissions==[(tmp_path/'plan.json','P','O')]
+    assert fake.motion_execution_id
+    assert submissions==[((tmp_path/'plan.json','P','O'),dict(execution_id=fake.motion_execution_id))]
 
 
 def test_late_cancelled_visual_reply_cannot_stop_new_action():

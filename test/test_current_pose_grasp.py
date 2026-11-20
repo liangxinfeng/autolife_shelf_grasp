@@ -30,3 +30,31 @@ def test_old_receipt_mode_not_silently_accepted(window):
     w=window;scene(w);w.send('plan',id=1);e=plan(w)
     (w.run/'prepare_result.json').unlink();w.receive_event(e)
     w.start_execution();assert w.pending_plan is None
+
+
+@pytest.mark.parametrize('saved_pose',[None,'invalid json'])
+def test_open_grasp_starts_recognition_only(window,saved_pose):
+    w=window
+    if saved_pose is not None:
+        path=w.root/'data/fixed_actions/manual_reset_pose.json'
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(saved_pose)
+    held=w.run/'held_object.json'
+    held.write_text(json.dumps(dict(status='completed',plan_id='previous')))
+    previous=held.read_bytes()
+    scene(w)
+    w.pending_plan={'plan_id':'stale'}
+    w.auto_grasp.setChecked(True)
+    w.controls()
+    assert w.prepare.isEnabled()
+    with patch.object(Q.QMessageBox,'question',side_effect=AssertionError('unexpected dialog')):
+        w.prepare.click()
+        w.prepare.click()  # A second click while recognition is busy must not enqueue work.
+        assert [cmd['action'] for cmd in w.process.commands]==['scan']
+        assert w.pending_plan is None
+        assert not w.items and w.list.count()==0
+        scene(w)
+    assert [cmd['action'] for cmd in w.process.commands]==['scan']
+    assert not w.execute.isEnabled()
+    assert held.read_bytes()==previous
+    assert not (w.run/'prepare_result.json').exists()

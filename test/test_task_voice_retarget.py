@@ -18,13 +18,13 @@ def record():
     return dict(groups=GROUP_ORDER,loop_count=1,speed_percent=70,keyframes=[dict(joints_deg=q,transition_sec=3.,hold_sec=0.,easing='smooth')])
 
 def geometry():
-    import yaml
-    root=Path(__file__).parents[1];cfg=yaml.safe_load((root/'config/grasp.yaml').read_text())
+    from autolife_shelf_grasp_306.runtime_config import load_config
+    cfg=load_config(Path(__file__).parents[1])
     return ModelGeometry(cfg['urdf_path'])
 
 def test_tts_and_arm_selection_survive_save_retry():
     r=validate(dict(steps=[dict(kind='tts',target='请稍等，正在取饮料'),dict(kind='action',target='取物',execution_arm='left')]))
-    assert r['steps'][0]==dict(kind='tts',target='请稍等，正在取饮料')
+    assert r['steps'][0]==dict(kind='tts',target='请稍等，正在取饮料',required=False)
     assert r['steps'][1]['execution_arm']=='left'
     c=Cursor(r);old=c.token;c.stop('test');c.retry();assert not c.complete(old)
     assert c.complete(c.token) and c.step['execution_arm']=='left'

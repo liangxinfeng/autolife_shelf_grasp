@@ -182,10 +182,12 @@ class NativeTrajectoryAdapter:
 
 def load_trajectory_function(cfg):
     # 执行端只加载原厂轨迹函数，不能从规划模块间接引入 Pinocchio。
-    import sys
-    for path in (cfg['vendor_python_path'], '/usr/lib/python3/dist-packages'):
-        if path not in sys.path:sys.path.append(path)
-    from autolife_robot_arm.arm_task_control_base import ArmTaskControlBase
+    from .resources import add_vendor_import_paths
+    add_vendor_import_paths(cfg)
+    try:
+        from autolife_robot_arm.arm_task_control_base import ArmTaskControlBase
+    except ImportError as exc:
+        raise ValueError('原厂轨迹依赖不可用；请安装到当前Python或配置vendor_python_path：'+str(exc)) from exc
     return ArmTaskControlBase.move_joints_trajectory
 
 
@@ -212,22 +214,12 @@ def execute_blocks(node, plan, checked, clock, close_gripper, hold, report, traj
             duration=block['duration_sec'], excluded_joints_name=BODY[:2], rate_hz=60.)
         endpoint = block['waypoints'][-1]
         # 闭爪前必须到抓点；不以仍在追赶的手臂去夹物。中间采样点不等反馈。
-        deadline = clock()+5.; stable_since = None; last_report = -float('inf')
-        while True:
-            q = checked(); now = clock()
-            error = max(abs(q[n]-endpoint[n]) for n in names)
-            if now-last_report >= .2:
-                report(dict(stage=block['name'], elapsed_sec=now-start,
-                    planned_sec=block['duration_sec'], max_error_deg=error,
-                    execution_backend='vendor_trajectory_v1', position_sync_active=True))
-                last_report = now
-            if error <= .7:
-                if stable_since is None: stable_since = now
-                if now-stable_since >= .15: break
-            else: stable_since = None
-            if now > deadline:
-                worst = max(names, key=lambda n: abs(q[n]-endpoint[n]))
-                raise ValueError(f'整段轨迹终点未到位：{worst}，偏差{abs(q[worst]-endpoint[worst]):.2f}°')
+        from .phase_arrival import GRASP_ENDPOINT,wait_endpoint
+        def arrival_report(value):
+            report(dict(value,elapsed_sec=clock()-start,planned_sec=block['duration_sec'],
+                execution_backend='vendor_trajectory_v1',position_sync_active=True))
+        wait_endpoint(checked,clock,endpoint,names,GRASP_ENDPOINT,
+            label=block['name'],report=arrival_report)
         if block['close_after']:
             contact = close_gripper()
     hold(node, ['leg_waist', plan['config']['arm']+'_arm'])

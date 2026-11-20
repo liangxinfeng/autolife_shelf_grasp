@@ -1,4 +1,5 @@
 """Read-only feedback for planning. No publisher or automatic hardware takeover."""
+from .runtime_identity import identity
 import threading
 import time
 from collections import deque
@@ -18,8 +19,8 @@ class Robot(Node):
         super().__init__('shelf_grasp_feedback_306')
         self.history=deque(maxlen=120);self.mutex=threading.Lock();self.last_error='等待关节反馈'
         self.base=None;self.base_stamp=None
-        self.create_subscription(String,'/topic_arm_whole_body_and_gripper_current_joints_status_0_345',self.receive,qos_profile_sensor_data)
-        self.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',self.receive_base,qos_profile_sensor_data)
+        self.create_subscription(String,f'/topic_arm_whole_body_and_gripper_current_joints_status_{identity().topic_suffix}',self.receive,qos_profile_sensor_data)
+        self.create_subscription(Odometry,f'/topic_gv_wheel_odom_{identity().topic_suffix}',self.receive_base,qos_profile_sensor_data)
         self.stop_event=threading.Event();self.thread=threading.Thread(target=self.spin,daemon=True);self.thread.start()
 
     def spin(self):
@@ -59,7 +60,7 @@ class Robot(Node):
 
     def refresh_measured(self):
         # 后台线程持续处理ROS；此处只调用驱动读服务，不触发使能。
-        from .feedback_refresh import refresh, await_snapshot
+        from .feedback_refresh import FeedbackReadUnavailable, refresh, await_snapshot
         q=refresh(self,lambda:time.sleep(.01))
         with self.mutex:self.history.clear()
         deadline=time.monotonic()+2.
@@ -68,8 +69,8 @@ class Robot(Node):
                 current=self.sample(stationary=True)
                 await_snapshot(lambda:current,lambda:None,q,timeout=0.)
                 return current
-            except ValueError:
-                if time.monotonic()>deadline:raise
+            except ValueError as exc:
+                if time.monotonic()>deadline:raise FeedbackReadUnavailable(str(exc)) from exc
                 time.sleep(.02)
 
     def receive_base(self,msg):

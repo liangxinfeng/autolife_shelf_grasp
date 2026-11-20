@@ -1,0 +1,12 @@
+[
+  {
+    "repo": "IDEA-Research/grounding-dino-tiny",
+    "ok": false,
+    "error": "[Errno 101] Network is unreachable"
+  },
+  {
+    "repo": "facebook/sam2.1-hiera-tiny",
+    "ok": false,
+    "error": "[Errno 101] Network is unreachable"
+  }
+]

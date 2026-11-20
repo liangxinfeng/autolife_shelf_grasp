@@ -96,7 +96,14 @@ def test_execution_recovery_is_neck_only_and_restores_tolerance(mode):
 def test_recovery_real_bridge_acceptance_without_ros_or_publishers(mode,monkeypatch):
     """Use actual parser/apply chain, without initializing ROS or any hardware."""
     from autolife_handeye_calibration_306.bridge import CalibrationBridge
-    q,goal,kin=fixture();target,changes=m.recovery_target(q,goal,kin);clock=[0.];held=[]
+    from control_center_joint_control.joint_definitions import JOINT_LIMITS
+    q,goal,kin=fixture()
+    # The bridge clamps to its installed model limits; the analytic fixture's
+    # historical -45/30 degree range is intentionally not used for this test.
+    name='Joint_Neck_Pitch';lo,hi=JOINT_LIMITS[name];index=kin.joint_q[name]
+    kin.lower[index],kin.upper[index]=np.deg2rad([lo,hi])
+    q[name]=lo-1.13;goal[name]=lo+5.
+    target,changes=m.recovery_target(q,goal,kin);clock=[0.];held=[]
     class OfflineBridge(CalibrationBridge):
         def __init__(self):
             self.gui_call=False;self.gate=lambda group:'';self.sampling=False;self.conflict=''

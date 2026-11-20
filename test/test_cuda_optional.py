@@ -39,7 +39,37 @@ def action():return dict(kind='action',target='丢垃圾')
 def set_action(w,monkeypatch):
     # Only action validation is stubbed here; actual playback regression runs separately.
     monkeypatch.setattr('autolife_shelf_grasp_306.action_studio.full_record',lambda x:x)
-    w.studio.records=lambda:{'丢垃圾':{'test_record':True}}
+    w.studio.records=lambda names=None:{'丢垃圾':{'test_record':True}}
+
+
+def test_no_actions_never_read_library_at_manual_or_automatic_start(window):
+    w=window;record=dict(steps=[nav()])
+    w.studio.records=Mock(side_effect=AssertionError('unrelated action library read'))
+    w.workflow.next=lambda:None
+    w.workflow.start(record,confirmed=True)
+    assert w.workflow.active and w.workflow.actions=={}
+    w.workflow.advance()
+    p=w.automatic;p.library={'导航':record};p.names.addItem('导航')
+    p.start('single',confirmed=True)
+    assert p.active and w.workflow.active and not w.studio.records.called
+
+
+def test_repeated_action_and_cycle_share_validated_session_snapshot(window,qt,monkeypatch):
+    from copy import deepcopy
+    w=window;p=w.automatic
+    raw={'test_record':True}
+    validate=Mock(side_effect=deepcopy)
+    monkeypatch.setattr('autolife_shelf_grasp_306.action_studio.full_record',validate)
+    w.studio.records=Mock(return_value={'丢垃圾':raw,'无关动作':{}})
+    p.library={'往返':dict(steps=[action(),action()])};p.names.addItem('往返')
+    p.cycles.setValue(2);w.workflow.next=lambda:None
+    p.start('loop',confirmed=True)
+    assert p.active and list(p.actions)==['丢垃圾']
+    raw['test_record']=False
+    for _ in range(2):w.workflow.advance();qt.processEvents()
+    p.deadline=0;p.tick()
+    assert p.completed==1 and w.workflow.actions['丢垃圾']['test_record'] is True
+    assert validate.call_count==1 and w.studio.records.call_count==1
 
 
 def test_no_cuda_ui_and_editor_available_vision_disabled(window):
@@ -67,11 +97,13 @@ def test_navigation_action_navigation_full_dispatch_without_worker(window,qt,mon
 
 
 @pytest.mark.parametrize('kind',['grasp','place'])
-def test_mixed_flow_blocked_before_any_navigation(window,kind):
-    w=window
-    with pytest.raises(ValueError,match='第2步.*需要视觉能力'):
-        w.workflow.start(dict(steps=[nav(),dict(kind=kind,target='瓶子')]),confirmed=True)
-    assert not w.navigation.command.called and not w.workflow.active
+def test_mixed_flow_checks_vision_when_reaching_visual_step(window,qt,kind):
+    w=window;f=w.workflow
+    f.start(dict(steps=[nav(),dict(kind=kind,target='瓶子')]),confirmed=True)
+    assert w.navigation.command.called and f.phase=='navigate'
+    f.navigation_done(dict(run_id=f.cursor.run_id,leg=f.cursor.token,success=True,map='map'))
+    qt.processEvents()
+    assert f.waiting and f.cursor.index==1 and '需要视觉能力' in f.cursor.reason
 
 
 @pytest.mark.parametrize('fault',['stale','no_pose','map_fault','not_ready','missing_waypoint'])

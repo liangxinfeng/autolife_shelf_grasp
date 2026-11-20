@@ -31,24 +31,31 @@ def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separato
 class TeachingLibrary:
     def __init__(self,directory):
         self.directory=Path(directory);self.path=self.directory/'saved_joint_actions.yaml'
-        self.revision=None
+        self.revision=None;self._document=None
+
+    def _read_document(self):
+        raw=self.path.read_bytes() if self.path.exists() else b''
+        revision=hashlib.sha256(raw).hexdigest()
+        if self.revision!=revision:
+            doc=yaml.safe_load(raw) or {'version':1,'actions':{}}
+            if not isinstance(doc,dict) or not isinstance(doc.get('actions',{}),dict):raise ValueError('动作库格式不正确')
+            self.revision,self._document=revision,doc
+        return self._document
 
     def read(self):
-        raw=self.path.read_bytes() if self.path.exists() else b''
-        self.revision=hashlib.sha256(raw).hexdigest()
-        doc=yaml.safe_load(raw) or {'version':1,'actions':{}}
-        if not isinstance(doc,dict) or not isinstance(doc.get('actions',{}),dict):raise ValueError('动作库格式不正确')
-        return doc
+        return deepcopy(self._read_document())
 
-    def records(self):
-        doc=self.read();result={}
+    def records(self,names=None):
+        doc=self._read_document();result={}
         for name,record in doc.get('actions',{}).items():
-            try:result[validate_action_name(name)]=normalized_record(record)
+            try:
+                name=validate_action_name(name)
+                if names is None or name in names:result[name]=normalized_record(record)
             except (ValueError,TypeError,KeyError):continue
         return result
 
     def load(self,name):
-        doc=self.read();record=normalized_record(doc['actions'][name])
+        doc=self._read_document();record=normalized_record(doc['actions'][name])
         meta=doc.get('teaching_editor',{}).get(name,{})
         if meta.get('record_digest')==digest(record):
             draft=deepcopy(meta['draft']);draft['name']=name;return normalize_draft(draft)

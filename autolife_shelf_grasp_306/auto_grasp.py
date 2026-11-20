@@ -3,7 +3,11 @@ import math
 
 
 class CandidateUnavailable(ValueError):
-    """Only this object's depth or collision-checked path is unavailable."""
+    """Only this candidate failed re-identification, depth or path validation."""
+
+
+class StationaryPathsExhausted(CandidateUnavailable):
+    """The target is outside the arm envelope or its stationary routes were exhausted."""
 
 
 def rank_candidates(items):

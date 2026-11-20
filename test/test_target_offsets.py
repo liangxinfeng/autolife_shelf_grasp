@@ -63,11 +63,9 @@ def test_editor_persistence_invalidation_and_command_snapshot(tmp_path):
     finally:w.close();app.processEvents()
 
 def test_real_robot_torso_axes():
-    import yaml
+    from autolife_shelf_grasp_306.runtime_config import load_config
     from autolife_handeye_calibration_306.core import Kinematics,TORSO,MOUNT
-    path=Path('/home/ubuntu/ros2_ws/src/autolife_shelf_grasp_306/config/grasp.yaml')
-    if not path.exists():pytest.skip('robot model unavailable')
-    cfg=yaml.safe_load(path.read_text());fk=Kinematics(cfg['urdf_path']);q={j[0]:0. for j in fk.joints.values()}
+    cfg=load_config(Path(__file__).parents[1]);fk=Kinematics(cfg['urdf_path']);q={j[0]:0. for j in fk.joints.values()}
     r=fk.fk('Link_Zero_Point',TORSO,q)[:3,:3]
     print('Torso rotation at zero joints:',r.tolist())
     print('Camera mount in torso:',fk.fk(TORSO,MOUNT,q)[:3,3].tolist())

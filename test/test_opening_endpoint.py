@@ -37,6 +37,7 @@ def test_real_executor_preopening_endpoint(tmp_path,arm,fault):
             q[jaw]+=float(np.clip(target-q[jaw],-2.4,2.4))
         return dict(q)
     env=dict(prepared=None,__name__=executor.__name__,__package__=executor.__package__,observing=False,
+        placing=False,execution_progress=executor.ExecutionProgress(),
         checked=checked,motion_now=lambda:now[0],arm=arm,cfg=cfg,gripper_targets=gripper_targets,
         node=node,native_motion=True,vendor_place=False,vendor_grasp=True,open_tolerance=open_tolerance,
         Arrival=Arrival,hold_groups=lambda *a:holds.append(a),atomic_json=lambda p,v:reports.append(v),run=tmp_path,plan=plan)
@@ -46,7 +47,10 @@ def test_real_executor_preopening_endpoint(tmp_path,arm,fault):
     exec(compile(ast.Module(body=funcs,type_ignores=[]),'<real opening callbacks>','exec'),env)
     state=env['start_gripper'](10.)
     assert state['minimum_opening_mm']==(None if fault=='legacy' else plan['minimum_opening_m']*1000)
-    if fault and fault not in ('legacy','measurement_rounding'):
+    if fault=='insufficient_path':
+        assert env['finish_gripper'](state)=='opening_command_complete_unverified'
+        assert not holds
+    elif fault and fault not in ('legacy','measurement_rounding'):
         with pytest.raises(ValueError):env['finish_gripper'](state)
     else:
         assert env['finish_gripper'](state)=='opening_clear'

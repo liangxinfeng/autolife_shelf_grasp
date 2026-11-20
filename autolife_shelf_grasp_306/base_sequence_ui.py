@@ -1,4 +1,5 @@
 """Compact parameter editor and bounded process adapter for fixed base motion."""
+import sys
 import json
 from PyQt5 import QtCore as C,QtWidgets as Q
 from .base_sequence import MOVES,normalize,summary,LINEAR_SPEED_MAX_CM_S,ANGULAR_SPEED_MAX_DEG_S
@@ -68,7 +69,7 @@ class BaseRunner(C.QObject):
         self.token=token;self.result=None;self.buffer=b'';p=C.QProcess(self);self.proc=p
         p.readyReadStandardOutput.connect(self.read);p.readyReadStandardError.connect(self.log)
         p.finished.connect(self.finished);p.errorOccurred.connect(self.error)
-        p.start('/usr/bin/python3',['-m','autolife_shelf_grasp_306.base_execution','--run',str(self.owner.run),'--token',token])
+        p.start(sys.executable,['-m','autolife_shelf_grasp_306.base_execution','--run',str(self.owner.run),'--token',token])
     def read(self):
         self.buffer+=bytes(self.proc.readAllStandardOutput())
         while b'\n' in self.buffer:

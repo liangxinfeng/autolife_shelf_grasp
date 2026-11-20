@@ -104,7 +104,7 @@ def test_posture_reuse_never_leaks_into_separate_grasp_process(kind,keep):
     owner=NS(flow_label=NS(setText=lambda *a:None),controls=lambda:None,
         studio=NS(adjust_posture=lambda *a,**kw:calls.append(kw)))
     w=NS(owner=owner,cursor=NS(token='one',step=dict(kind=kind,posture=dict(head_pitch_deg=5))),phase=kind,
-        adjust_posture=lambda *a:None)
+        adjust_posture=lambda *a:None,mark_dispatch=lambda phase:None)
     Workflow.adjust_posture(w,lambda:None)
     assert calls==[dict(keep_session=keep)]
 
@@ -126,7 +126,8 @@ def test_actual_executor_preparation_branch_one_enable(monkeypatch,native,placin
     monkeypatch.setattr('autolife_shelf_grasp_306.pose_manual_session.ManualHoldSession',Session)
     def unlock():calls.append(('unlock',));return NS(success=True)
     env=dict(prepared=None,__package__='autolife_shelf_grasp_306',native_motion=native,placing=placing,observing=False,
-        vendor_grasp=native and not placing,node=NS(unlock=unlock,_hardware_ready=True),
+        execution_progress=execution.ExecutionProgress(),
+        vendor_grasp=native and not placing,node=NS(unlock=unlock,_hardware_ready=True,preserve_loaded_grippers=placing),
         PositionSyncSession=Session,mark=lambda n:calls.append(('mark',n)),spin=lambda:None,
         check_start_pose=lambda s:calls.append(('check',s)),refreshed={'validated':True},
         cfg=dict(use_position_sync_session=True),preparing=not native,neck_contact_segments=[],time=__import__('time'))

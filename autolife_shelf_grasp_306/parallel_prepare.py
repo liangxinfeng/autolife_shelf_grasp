@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 import numpy as np
 from .core import atomic_json, open_tolerance
+from .motion_supervision import MotionSupervisor,ExecutionProgress,attempt_cleanup
 
 
 def wait_body_ready(run,token,timeout=16.):
@@ -51,9 +52,13 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--root',required=True);parser.add_argument('--run',required=True)
     parser.add_argument('--token',required=True);parser.add_argument('--kind',choices=('grasp','place'),required=True)
     args=parser.parse_args();run=Path(args.run);root=Path(args.root);node=session=base=preloader=None;handed=False
+    failure=None;command={};preopen=False
+    supervision=MotionSupervisor(run)
+    execution_progress=ExecutionProgress(execution_id=args.token,
+        on_update=lambda value:atomic_json(run/'execution_progress.json',value))
     from . import execution as executor
-    import rclpy,yaml
-    cfg=yaml.safe_load((root/'config/grasp.yaml').read_text('utf8'))
+    import rclpy
+    from .runtime_config import load_config
     status='starting';last_write=-float('inf');started=time.monotonic();paused_total=0.
     def motion_time():return time.monotonic()-paused_total
     def report(force=False):
@@ -64,14 +69,11 @@ def main():
                 seconds=now-started,time=time.time()))
             last_write=now
     def pump():
-        if node is not None:
-            for _ in range(10):rclpy.spin_once(node,timeout_sec=0)
-        if (run/'stop').exists():raise ValueError('用户停止')
-        if not (run/'heartbeat').exists() or time.time()-(run/'heartbeat').stat().st_mtime>1.:raise ValueError('界面心跳中断')
-        if session is not None:
-            session.tick()
-            if session.active:node._last_operator_activity=time.monotonic()
-        if base is not None and base.last is not None:base.check()
+        def callbacks():
+            if node is not None:
+                for _ in range(10):rclpy.spin_once(node,timeout_sec=0)
+        supervision.poll(callbacks,session,base)
+        if session is not None and session.active:node._last_operator_activity=time.monotonic()
         report();time.sleep(.005)
     def spin():
         nonlocal paused_total
@@ -82,21 +84,23 @@ def main():
             while (run/'task_pause').exists():pump()
             paused_total+=time.monotonic()-begin
     try:
+        cfg=load_config(root)
         from .core import execution_blockers
         blockers=execution_blockers(cfg)
         if blockers:raise ValueError('；'.join(blockers))
         if cfg.get('grasp_backend')!='vendor_ik_trajectory':raise ValueError('当前运控不支持并行准备')
         from autolife_handeye_calibration_306.bridge import competing_controller
         if competing_controller():raise ValueError(competing_controller())
-        if args.kind=='grasp' and (run/'held_object.json').exists():raise ValueError('并行张爪不能接管持物任务')
+        from .held_receipt import has_held
+        preopen=args.kind=='grasp' and not has_held(run)
         from .trajectory_preload import TrajectoryPreload
         from .vendor_grasp_trajectory import load_trajectory_function
         preloader=TrajectoryPreload(load_trajectory_function,cfg)
         # 首次原厂库导入可能长时间占用GIL；在取得运动会话前完成。
         # 感知工作进程仍并行运行，停止/心跳继续响应，不提前使能。
         function=preloader.result(spin);preloader.close();preloader=None
-        rclpy.init(args=executor.bridge_ros_args(.3,30.,True,args.kind=='grasp'))
-        node=executor.CalibrationBridge();node.preserve_loaded_grippers=args.kind=='place'
+        rclpy.init(args=executor.bridge_ros_args(.3,30.,True,args.kind=='grasp',cfg))
+        node=executor.CalibrationBridge();node.preserve_loaded_grippers=not preopen
         from .demo_protocol import StationaryBaseGuard
         deadline=time.monotonic()+1.
         while base is None:
@@ -112,19 +116,23 @@ def main():
         from .feedback_refresh import refresh,await_snapshot
         refreshed=refresh(node,spin);await_snapshot(node.snapshot,spin,refreshed)
         from .pose_manual_session import ManualHoldSession
-        session=ManualHoldSession(node,preserve_gripper_targets=args.kind=='place');session.requires_grasp_finish=True
+        session=ManualHoldSession(node,preserve_gripper_targets=not preopen);session.requires_grasp_finish=True
+        execution_progress.enter('preparing')
+        execution_progress.dispatch('hold_command_started')
         session.enter_prepared(spin,refreshed)
         status='body_ready';report(True)
-        if args.kind=='grasp':
+        if preopen:
             start=node.snapshot();ramp,timeout=opening_ramp(cfg,start);begin=motion_time();stable=None;last_send=-float('inf')
             while True:
                 spin();q=node.snapshot();now=motion_time();payload,ready=ramp(now-begin,q)
                 if now-last_send>=1./60:
+                    execution_progress.enter('gripper_opening')
+                    execution_progress.dispatch('opening_command_started')
                     node._publish_vendor(node._gripper_pub,payload);node._last_operator_activity=now;last_send=now
                 if ready:break  # 目标按受限速度发送完成即交接，不等待精确位置。
                 if now-begin>timeout:raise ValueError('并行张爪指令输出未完成')
             # 保留刚发送的张开目标；不能用稍滞后的反馈改写目标、提前锁住未全开的夹爪。
-        status='ready';report(True)
+        status='ready';execution_progress.enter('prepared_waiting_plan');report(True)
         request=run/'parallel_prepare_execute.json'
         deadline=motion_time()+90.
         while True:
@@ -154,27 +162,39 @@ def main():
         if plan.get('parallel_prepare_token')!=args.token:raise ValueError('规划不属于本次并行准备')
         if (args.kind=='place')!=(plan.get('kind')=='place'):raise ValueError('并行准备与动作类型不一致')
         # 同一进程、同一节点和同一会话；不会结束后再使能，不会同时存在两个写入者。
-        prepared=dict(node=node,session=session,base_guard=base,trajectory_function=function,kind=args.kind,token=args.token)
-        handed=True
-        executor.main(['--plan',str(path),'--run',str(run),'--expected-plan-id',command['plan_id'],
-            '--expected-product-id',command['product_id']],prepared=prepared)
+        prepared=dict(node=node,session=session,base_guard=base,trajectory_function=function,kind=args.kind,token=args.token,
+            execution_progress=execution_progress,preopened=preopen)
+        execution_args=['--plan',str(path),'--run',str(run),'--expected-plan-id',command['plan_id'],
+            '--expected-product-id',command['product_id']]
+        if command.get('execution_id'):
+            execution_args.extend(['--execution-id',command['execution_id']])
+        executor.main(execution_args,prepared=prepared)
+        handed=True  # The executor completed its cleanup and terminal receipt.
     except Exception as exc:
-        atomic_json(run/'parallel_prepare_state.json',dict(token=args.token,status='failed',reason=str(exc),stamp=time.monotonic()))
-        atomic_json(run/'execution_result.json',dict(status='stopped',reason=str(exc)))
+        failure=exc
         print('并行准备停止：'+str(exc),flush=True)
     finally:
-        if preloader is not None:preloader.close()
+        cleanup_errors=[];diagnostic_errors=[]
+        if preloader is not None:attempt_cleanup(cleanup_errors,'trajectory_preloader',preloader.close)
         if not handed:
             if node:
-                try:executor.hold_groups(node,['left_arm','right_arm','neck','leg_waist']+(['grippers'] if args.kind=='grasp' else []))
-                except Exception as exc:print('准备停止保持提示：'+str(exc),flush=True)
-                try:
-                    if session:session.close(preserve_grippers=args.kind=='place')
-                finally:
-                    node._lock('并行准备结束，保持当前位置')
-                    if base:base.close()
-                    node.destroy_node()
-            if rclpy.ok():rclpy.shutdown()
+                if getattr(node,'_hardware_ready',False):
+                    attempt_cleanup(diagnostic_errors,'hold_journal',lambda:execution_progress.dispatch('hold_command_started'))
+                attempt_cleanup(cleanup_errors,'hold',lambda:executor.hold_groups(node,
+                    ['left_arm','right_arm','neck','leg_waist']+(['grippers'] if args.kind=='grasp' else [])))
+                if session:attempt_cleanup(cleanup_errors,'sync_close',lambda:session.close(preserve_grippers=not preopen))
+                attempt_cleanup(cleanup_errors,'lock',lambda:node._lock('并行准备结束，保持当前位置'))
+                attempt_cleanup(cleanup_errors,'destroy_node',node.destroy_node)
+            if base:attempt_cleanup(cleanup_errors,'base_close',base.close)
+            attempt_cleanup(cleanup_errors,'ros_shutdown',lambda:rclpy.shutdown() if rclpy.ok() else None)
+        if failure is not None:
+            record=dict(execution_progress.receipt('stopped',failure),status='stopped',reason=str(failure))
+            if command.get('plan_id'):record['plan_id']=command['plan_id']
+            if cleanup_errors:record['cleanup_errors']=cleanup_errors
+            if diagnostic_errors:record['diagnostic_errors']=diagnostic_errors
+            attempt_cleanup(diagnostic_errors,'prepare_state',lambda:atomic_json(run/'parallel_prepare_state.json',
+                dict(record,token=args.token,status='failed',stamp=time.monotonic())))
+            attempt_cleanup(diagnostic_errors,'execution_receipt',lambda:atomic_json(run/'execution_result.json',record))
 
 
 if __name__=='__main__':main()

@@ -45,6 +45,7 @@ def scenario(tmp_path,side='right',floor=16.94130039215088,fault=None,plan_overr
             if last[0] is not None:q[jaw]+=float(np.clip(max(floor,last[0])-q[jaw],-2.4,2.4))
         return dict(q)
     env=dict(prepared=None,__name__=executor.__name__,__package__=executor.__package__,observing=False,checked=checked,motion_now=lambda:now[0],arm=side,cfg=cfg,
+        placing=True,execution_progress=executor.ExecutionProgress(),
         gripper_targets=gripper_targets,node=node,native_motion=True,vendor_place=True,vendor_grasp=False,
         open_tolerance=open_tolerance,Arrival=Arrival,hold_groups=executor.hold_groups,
         atomic_json=lambda p,v:reports.append(v),run=tmp_path,plan=plan)

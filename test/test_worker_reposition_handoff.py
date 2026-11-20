@@ -12,7 +12,7 @@ from autolife_shelf_grasp_306.mobile_reach import RepositionRequired
 
 
 def request_handler(namespace):
-    tree=ast.parse(inspect.getsource(worker))
+    tree=ast.parse(inspect.getsource(worker.main))
     node=next(n for n in ast.walk(tree) if isinstance(n,ast.Try) and
               any(isinstance(h.type,ast.Name) and h.type.id=='RepositionRequired' for h in n.handlers))
     node=copy.deepcopy(node)
@@ -26,6 +26,7 @@ def environment(tmp_path):
     events=[]
     env=dict(__name__=worker.__name__,__package__=worker.__package__,
              RepositionRequired=RepositionRequired,CandidateUnavailable=worker.CandidateUnavailable,
+             StationaryPathsExhausted=worker.StationaryPathsExhausted,
              run=tmp_path,ident=12,cmd={'action':'plan','request_id':12},time=worker.time,
              sys=worker.sys,atomic_json=worker.atomic_json,
              emit=lambda kind,**kw:events.append((kind,kw)))
@@ -47,7 +48,7 @@ def test_first_grasp_real_selector_and_handler_keep_worker_alive(monkeypatch,tmp
     monkeypatch.setattr(operation_docking,'grasp',lambda *a,**kw:{'token':'test'})
     tree=ast.parse(inspect.getsource(worker))
     selector=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='select_operation_dock')
-    source='dock_attempted=False\n'+ast.unparse(selector)+'\nselect_operation_dock()'
+    source=ast.unparse(selector)+'\nselect_operation_dock()'
     exec('def trigger():\n'+textwrap.indent(source,'    '),env)
     request=request_handler(env)
     assert request() is None
@@ -98,7 +99,7 @@ def test_proposal_write_failure_does_not_close_vision(tmp_path):
 
 
 def test_place_and_grasp_producers_both_pack_frame_before_raise():
-    tree=ast.parse(inspect.getsource(worker))
+    tree=ast.parse(inspect.getsource(worker.main))
     raises=[n.exc for n in ast.walk(tree) if isinstance(n,ast.Raise) and isinstance(n.exc,ast.Call)
             and isinstance(n.exc.func,ast.Name) and n.exc.func.id=='RepositionRequired']
     assert len(raises)==2

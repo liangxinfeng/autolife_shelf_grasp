@@ -1,4 +1,5 @@
 """Qt异步语音步骤：不阻塞界面；完成才推进，停止取消本次音频。"""
+import sys
 import json,os,signal
 from pathlib import Path
 from PyQt5 import QtCore as C
@@ -14,7 +15,7 @@ class TaskSpeech(C.QObject):
         p=C.QProcess(self);self.proc=p
         p.finished.connect(lambda code,status:self.finish(p,token,code))
         p.errorOccurred.connect(lambda error:self.finish(p,token,-1) if error==C.QProcess.FailedToStart else None)
-        p.setProgram('/usr/bin/setsid');p.setArguments(['/usr/bin/python3',str(Path(__file__).with_name('task_tts_worker.py')),'--root',str(self.owner.root)])
+        p.setProgram('/usr/bin/setsid');p.setArguments([sys.executable,str(Path(__file__).with_name('task_tts_worker.py')),'--root',str(self.owner.root)])
         def started():
             if p is not self.proc:
                 self.terminate(p);return

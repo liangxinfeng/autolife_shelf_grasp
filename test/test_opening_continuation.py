@@ -52,15 +52,12 @@ def test_ordinary_precise_opening_also_supports_next_frame():
 
 
 def test_editor_error_saved_before_action_state_cleared(tmp_path):
-    import autolife_shelf_grasp_306.action_studio as module
-    tree=ast.parse(Path(module.__file__).read_text())
-    cls=next(n for n in ast.walk(tree) if isinstance(n,ast.ClassDef) and n.name=='ReceiptBridge')
+    from autolife_shelf_grasp_306.pose_execution_bridge import make_bridge
     class Base:
         def _cancel_action(self,reason):self._action_state=None
-    scope=dict(JointBridge=Base,self=NS(owner=NS(run=tmp_path)),time=time,json=json,__name__=module.__name__,__package__=module.__package__)
-    exec(compile(ast.Module(body=[cls],type_ignores=[]),str(module.__file__),'exec'),scope)
+    ReceiptBridge=make_bridge(Base,NS(owner=NS(run=tmp_path)))
     # This test exercises persistence only; bypass the ROS/timer constructor.
-    b,goal=fixture();bridge=object.__new__(scope['ReceiptBridge'])
+    b,goal=fixture();bridge=object.__new__(ReceiptBridge)
     bridge.__dict__.update(b.__dict__)
     bridge._cancel_action('simulated residual timeout')
     saved=json.loads((tmp_path/'last_action_error.json').read_text())

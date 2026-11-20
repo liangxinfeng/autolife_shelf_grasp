@@ -3,6 +3,7 @@
 No motor/CAN access, driver clearing, velocity mode, reset or global tuning.
 Vendor's 1.5 s lease watchdog is the crash fallback; normal exit holds then ASYNC.
 """
+from .runtime_identity import identity
 import json
 import time
 import rclpy
@@ -16,11 +17,11 @@ class PositionSyncSession:
         self.node=node;self.requested=False;self.active=False;self.last_heartbeat=-float('inf')
         self.requires_grasp_finish=False
         self.preserve_gripper_targets=bool(preserve_gripper_targets)
-        self.finish_client=node.create_client(SetBool,'/control_independent_sync_grasp_finish_0_345')
-        self.client=node.create_client(SetBool,('/control_independent_sync_loaded_session_0_345'
-            if self.preserve_gripper_targets else '/control_independent_sync_hold_session_0_345'))
-        self.heartbeat=node.create_publisher(String,'/control_independent_sync_heartbeat_0_345',10)
-        self.exit_pub=node.create_publisher(String,'/control_independent_sync_session_command_0_345',10)
+        self.finish_client=node.create_client(SetBool,f'/control_independent_sync_grasp_finish_{identity().topic_suffix}')
+        self.client=node.create_client(SetBool,(f'/control_independent_sync_loaded_session_{identity().topic_suffix}'
+            if self.preserve_gripper_targets else f'/control_independent_sync_hold_session_{identity().topic_suffix}'))
+        self.heartbeat=node.create_publisher(String,f'/control_independent_sync_heartbeat_{identity().topic_suffix}',10)
+        self.exit_pub=node.create_publisher(String,f'/control_independent_sync_session_command_{identity().topic_suffix}',10)
 
     def enter(self,spin):
         deadline=time.monotonic()+2.

@@ -1,4 +1,5 @@
 """Isolated manual-base helper. No navigation startup, arm command or auto motion."""
+from .runtime_identity import identity
 import json
 import math
 import sys
@@ -42,18 +43,18 @@ def main():
     from autolife_handeye_calibration_306.bridge import competing_controller
 
     rclpy.init();node=Node('shelf_grasp_chassis_306')
-    direct=node.create_publisher(Twist,'/topic_gv_target_cmd_vel_0_345',1)
+    direct=node.create_publisher(Twist,f'/topic_gv_target_cmd_vel_{identity().topic_suffix}',1)
     manual=node.create_publisher(Twist,'/manual_cmd_vel',1)
     override=node.create_publisher(Bool,'/manual_cmd_vel_active',1)
-    lease=ChassisControlLease(domain_id='0',robot_id='345')
+    lease=ChassisControlLease(domain_id=identity().domain_id,robot_id=identity().robot_id)
     client=redis.Redis(host='127.0.0.1',socket_timeout=.15,socket_connect_timeout=.15)
     state={'odom':0.,'stationary_since':None,'vendor_nav':False,'actions':{}}
     def odom(msg):
         now=time.monotonic();state['odom']=now;v=msg.twist.twist
         still=math.hypot(v.linear.x,v.linear.y)<.015 and abs(v.angular.z)<.025
         state['stationary_since']=(state['stationary_since'] or now) if still else None
-    node.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',odom,qos_profile_sensor_data)
-    node.create_subscription(Bool,'/robot_navigation_0_345/is_navigating',lambda m:state.update(vendor_nav=m.data),10)
+    node.create_subscription(Odometry,f'/topic_gv_wheel_odom_{identity().topic_suffix}',odom,qos_profile_sensor_data)
+    node.create_subscription(Bool,f'/robot_navigation_{identity().topic_suffix}/is_navigating',lambda m:state.update(vendor_nav=m.data),10)
     for topic in ('/navigate_to_pose/_action/status','/navigate_through_poses/_action/status','/dock_robot/_action/status'):
         node.create_subscription(GoalStatusArray,topic,
             lambda m,t=topic:state['actions'].update({t:any(s.status in (1,2,3) for s in m.status_list)}),
@@ -100,7 +101,7 @@ def main():
             else:
                 if not active:
                     try:
-                        if client.get('shared_params:0:300:is_navigating') in (b'true',b'True'):
+                        if client.get(identity().shared_key('is_navigating')) in (b'true',b'True'):
                             raise ValueError('底盘正由其他程序控制，请先退出对应控制')
                         if not lease.acquire(timeout_sec=0):raise ValueError(lease.last_error or '无法接管底盘')
                         route=manual if manual.get_subscription_count() else direct

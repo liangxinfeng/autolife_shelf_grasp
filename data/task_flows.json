@@ -1,0 +1,114 @@
+{
+  "丢垃圾": {
+    "version": 1,
+    "steps": [
+      {
+        "kind": "navigate",
+        "target": "入住区"
+      },
+      {
+        "kind": "grasp",
+        "target": "纸巾"
+      },
+      {
+        "kind": "navigate",
+        "target": "垃圾区"
+      },
+      {
+        "kind": "action",
+        "target": "丢垃圾全程",
+        "posture": {
+          "body_mode": "recorded",
+          "lowering_cm": 0.0,
+          "head_pitch_deg": null
+        }
+      },
+      {
+        "kind": "navigate",
+        "target": "入住区"
+      }
+    ]
+  },
+  "111": {
+    "version": 1,
+    "steps": [
+      {
+        "kind": "grasp",
+        "target": "白色袋子"
+      }
+    ]
+  },
+  "222": {
+    "version": 1,
+    "steps": [
+      {
+        "kind": "navigate",
+        "target": "前台区",
+        "posture": {
+          "body_mode": "reverse",
+          "lowering_cm": 10.0,
+          "head_pitch_deg": null
+        }
+      },
+      {
+        "kind": "grasp",
+        "target": "水瓶"
+      }
+    ]
+  },
+  "丢垃圾2": {
+    "version": 1,
+    "steps": [
+      {
+        "kind": "navigate",
+        "target": "入住区"
+      },
+      {
+        "kind": "grasp",
+        "target": "纸巾"
+      },
+      {
+        "kind": "navigate",
+        "target": "垃圾区"
+      },
+      {
+        "kind": "action",
+        "target": "丢垃圾全程",
+        "posture": {
+          "body_mode": "recorded",
+          "lowering_cm": 0.0,
+          "head_pitch_deg": null
+        }
+      },
+      {
+        "kind": "navigate",
+        "target": "桌子1"
+      },
+      {
+        "kind": "grasp",
+        "target": "纸巾"
+      },
+      {
+        "kind": "navigate",
+        "target": "垃圾区"
+      },
+      {
+        "kind": "action",
+        "target": "丢垃圾全程",
+        "posture": {
+          "body_mode": "recorded",
+          "lowering_cm": 0.0,
+          "head_pitch_deg": null
+        }
+      },
+      {
+        "kind": "navigate",
+        "target": "入住区"
+      },
+      {
+        "kind": "tts",
+        "target": "任务已完成"
+      }
+    ]
+  }
+}

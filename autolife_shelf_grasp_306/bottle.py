@@ -4,7 +4,6 @@ Vectors are in the URDF torso frame, whose +Z is NOT assumed to point up.
 """
 import cv2
 import numpy as np
-from scipy.optimize import least_squares
 from .core import unit
 
 
@@ -40,7 +39,7 @@ def object_points(frame,mask,T,cfg,dense=True):
     z=frame['depth'][rows,cols].astype(float)*cfg['depth_scale_m']
     lo,hi=cfg['depth_range_m'];valid=np.isfinite(z)&(z>=lo)&(z<=hi)
     if valid.sum()<80:
-        raise DepthQualityError('瓶身有效深度不足，请避开反光' if dense else '参照物有效深度点不足80个，暂不能确定三维位置')
+        raise DepthQualityError('目标有效深度不足80个点，暂不能确定三维位置')
     if dense and valid.mean()<.50:raise DepthQualityError('瓶身有效深度不足，请避开反光')
     rows,cols,z=rows[valid],cols[valid],z[valid]
     # Unlike the old global +/-65mm optical-depth cut, preserve vertical bottle
@@ -56,6 +55,7 @@ def center_from_points(points,up,product,camera):
     Recorded height is reference-only; target height is the visible midpoint.
     Neck/cap points are excluded from the radius fit but used for vertical extent.
     """
+    from scipy.optimize import least_squares
     p=np.asarray(points,float);u,v,n=horizontal_basis(up)
     if p.ndim!=2 or p.shape[1]!=3 or len(p)<80 or not np.isfinite(p).all():raise ValueError('瓶身点云不足')
     diameter=float(product['diameter_m']);height=float(product['height_m']);r=diameter/2
@@ -105,6 +105,7 @@ def foreground_cylinder(points,heights,r,seed,away,low,high,total):
     must support the same camera-facing shell. A rejected frame remains
     retryable. No missing depths are filled and the known radius is not changed.
     """
+    from scipy.optimize import least_squares
     if len(points)<80:return None
     side=np.array([-away[1],away[0]])
     width=np.diff(np.percentile(points@side,[5,95]))[0]
@@ -162,13 +163,36 @@ def cylinder_foreground(points,pixels,up,max_width):
 
 
 def estimate(frame,mask,T,up,product,cfg,observed=None):
-    points,pixels,bounds=object_points(frame,mask,T,cfg) if observed is None else observed
-    foreground=cylinder_foreground(points,pixels,up,cfg.get('gripper_max_width_m',.09))
-    ratio=float(foreground.mean());points=points[foreground];pixels=pixels[foreground]
-    center,stats,keep=center_from_points(points,up,product,T[:3,3])
-    ys=pixels[keep,1];y0,y1=bounds;span=max(1,y1-y0)
-    if len(ys)<80 or np.percentile(ys,1)>y0+span*.12 or np.percentile(ys,99)<y1-span*.12:
-        raise DepthQualityError('当前可见区域的上下边缘深度缺失过多，无法稳定确定可见部分中心')
+    if observed is None:
+        points,pixels,bounds=object_points(frame,mask,T,cfg,dense=False)
+        keep=cylinder_foreground(points,pixels,up,cfg.get('gripper_max_width_m',.09))
+        points,pixels=points[keep],pixels[keep];ratio=float(keep.mean())
+    else:
+        points,pixels,bounds,ratio=observed
+    from .object_geometry import front_contact,measured_relief
+    # Reject a mask whose only returns describe a flat background.
+    if not measured_relief(points):
+        raise DepthQualityError('分割区域的深度仅覆盖一个平面，无法区分目标与背景')
+    center,stats=front_contact(points,up,float(product['diameter_m']),T[:3,3])
+    stats.update(radius_m=float(product['diameter_m'])/2,height_source='measured_body_contact',
+                 center_source='front_depth_and_cross_section')
+    ys=pixels[:,1];y0,y1=bounds;span=max(1,y1-y0)
+    top,bottom=np.percentile(ys,[1,99])
+    if top>y0+span*.12 or bottom<y1-span*.12:
+        # Keep the measured body contact. Bound the carried silhouette separately.
+        outline=mask.astype(np.uint8)-cv2.erode(mask.astype(np.uint8),np.ones((3,3),np.uint8))
+        rows,cols=np.where(outline)
+        pixels=np.column_stack([cols,rows]).astype(float)[:,None,:]
+        ray_xy=cv2.undistortPoints(pixels,frame['K'],frame['D']).reshape(-1,2)
+        rays=np.column_stack([ray_xy,np.ones(len(rows))])@T[:3,:3].T
+        vertical=unit(up);offset=center-T[:3,3]
+        normal=unit(offset-vertical*(vertical@offset));projection=rays@normal
+        if not np.all(projection>0):raise DepthQualityError('瓶身轮廓无法投影到拟合深度')
+        depth=normal@offset;radius=stats['radius_m']
+        heights=(rays@vertical/projection)[:,None]*(depth+np.array([-radius,radius]))-offset@vertical
+        stats['collision_height_m']=float(2*np.max(np.abs(heights))+.006)
+        stats['placement_bottom_observed']=False
+        stats['height_source']='measured_body_contact'
     stats['image_cropped']=image_cropped(mask)
     stats['bottle_foreground_ratio']=ratio
     return center,stats
@@ -199,15 +223,20 @@ def planning_product(product,geometry):
             raise ValueError('局部物品包络高度上界无效')
         result['collision_height_m']=observed+2*max(0.,bound-observed)
     else:result['collision_height_m']=observed
+    if geometry.get('collision_height_m'):
+        result['collision_height_m']=max(result['collision_height_m'],geometry['collision_height_m'])
+    if geometry.get('placement_bottom_observed') is False:
+        result['placement_bottom_observed']=False
+        result['carried_shape']='measured_cylinder'
     return result
 
 
 def combine(samples, indices=None):
-    if len(samples)<5:raise ValueError('有效深度帧不足，请重试')
+    if not samples:raise ValueError('没有可定位的物体深度')
     from .multiframe import consensus_indices
     observed=len(samples)
     if indices is None:indices=consensus_indices([s[0] for s in samples])
-    if len(set(indices))<max(5,int(np.ceil(observed*.70))) or any(i<0 or i>=observed for i in indices):
+    if len(set(indices))<int(np.ceil(observed*.70)) or any(i<0 or i>=observed for i in indices):
         raise ValueError('有效深度缺少一致多数，请重试')
     samples=[samples[i] for i in indices]
     points=np.array([s[0] for s in samples]);center=np.median(points,axis=0)
@@ -219,4 +248,7 @@ def combine(samples, indices=None):
                   'observed_height_mm':float(np.median([s[1]['observed_height_mm'] for s in samples])),
                   'height_source':samples[0][1].get('height_source','visible_midpoint'),
                   'image_cropped':any(s[1].get('image_cropped',False) for s in samples),
+                  **({'placement_bottom_observed':False,'collision_height_m':max(
+                      s[1].get('collision_height_m',s[1]['observed_height_mm']/1000.) for s in samples)+2*spread}
+                     if any(s[1].get('placement_bottom_observed') is False for s in samples) else {}),
                   'support_required':False}

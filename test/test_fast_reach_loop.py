@@ -6,15 +6,36 @@ from autolife_shelf_grasp_306 import operation_docking as dock,reach_precheck as
 from autolife_shelf_grasp_306.mobile_reach import RepositionRequired
 
 
-def test_unresolved_hands_off_before_full_stationary_plan(monkeypatch):
+def test_unresolved_precheck_still_finds_a_full_stationary_plan(monkeypatch):
     from autolife_shelf_grasp_306.arm_selection import ArmPlannerPool
+    from autolife_shelf_grasp_306.worker import plan_before_docking
     monkeypatch.setattr(reach,'screen',lambda *a:[dict(arm='left',status='unresolved')])
     pool=ArmPlannerPool({'arm':'left','auto_arm_selection':False,'grasp_backend':'vendor_ik_trajectory'},None,None,None)
-    pool.native_planner=lambda *a:pytest.fail('移位决定之前不应完整规划')
-    def handoff(result):
-        assert result['status']=='reposition_review'
-        raise RepositionRequired({'reason':'better_pose'})
-    with pytest.raises(RepositionRequired):pool.plan({},np.zeros(3),{}, {},on_reach=handoff)
+    pool.arm_config=lambda *a:({'tool_geometry':{}},np.zeros(3))
+    pool.native_planner=lambda *a:NS(plan=lambda *args:{'segments':['complete']})
+    events=[]
+    result=plan_before_docking(pool.plan,lambda:pytest.fail('可原地规划，不能建议移位'),
+                               {},np.zeros(3),{},{},on_reach=events.append)
+    assert result[0]['segments']==['complete'] and events[0]['status']=='unresolved'
+
+
+@pytest.mark.parametrize('failure',['timeout','width','bad_calibration','cancel','exhausted'])
+def test_docking_requires_completed_stationary_search(failure):
+    from autolife_shelf_grasp_306.worker import plan_before_docking
+    from autolife_shelf_grasp_306.auto_grasp import StationaryPathsExhausted
+    from autolife_shelf_grasp_306.planning_control import PlanningTimeout,PlanningCancelled
+    error={'timeout':PlanningTimeout,'width':ValueError,'bad_calibration':ValueError,
+           'cancel':PlanningCancelled,'exhausted':StationaryPathsExhausted}[failure]
+    calls=[]
+    def stationary():raise error(failure)
+    def dock():calls.append('dock');return 'suggestion'
+    if failure=='exhausted':
+        assert plan_before_docking(stationary,dock)=='suggestion'
+        with pytest.raises(StationaryPathsExhausted):plan_before_docking(stationary,None)
+        assert calls==['dock']
+    else:
+        with pytest.raises(error):plan_before_docking(stationary,dock)
+        assert not calls
 
 
 def test_docking_only_solves_key_poses_not_full_trajectory(monkeypatch,tmp_path):

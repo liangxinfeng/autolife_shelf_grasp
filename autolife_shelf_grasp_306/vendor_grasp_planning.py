@@ -4,9 +4,7 @@
 再转换到固定底座系，不能在弯腰后把目标重新绑定到移动的躯干。
 """
 import json
-import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import numpy as np
 from .low_object_grasp import grasp_scope
@@ -15,8 +13,11 @@ from scipy.spatial.transform import Rotation
 from autolife_handeye_calibration_306.core import ARMS, BODY, NECK, TORSO, Kinematics
 from autolife_handeye_calibration_306.verification_core import wrist_frame
 from .planning import Planner, IKFailure
+from .vendor_ik_process import NoIKSolution
+from .planning_control import VENDOR_IK_POSITION_TOLERANCE_M
 from .carry import carry_goal
 from .grasp_collision import CollisionGuard
+from .resources import add_vendor_import_paths,vendor_control_path
 
 
 BASE = 'Link_Zero_Point'
@@ -44,14 +45,12 @@ class WaistAwareCollisionGuard(CollisionGuard):
         relative=self._neck_relative
         if not np.allclose(relative, self.reference_relative, atol=1e-8):
             return pairs
-        return [p for p in pairs if p not in self.static_neck_pairs]
+        return self.stationary_overlaps(pairs,values)
 
 
 def vendor_imports(cfg):
     """使用本机已安装的原厂库；不拷贝二进制、不创建原厂硬件控制实例。"""
-    for path in (cfg['vendor_python_path'], '/usr/lib/python3/dist-packages'):
-        if path not in sys.path:
-            sys.path.append(path)
+    add_vendor_import_paths(cfg)
 
 
 class VendorGraspPlanner(Planner):
@@ -75,24 +74,28 @@ class VendorGraspPlanner(Planner):
         if self.solver is not None:self.solver.close();self.solver=None
 
     def candidates(self, yaws=None):
-        # 原厂IK精确解完整位姿，不重复尝试同一求解的“软朝向”分支。
-        # 先求预抓端点并预检关节空间过渡，再考虑直线接近。
-        if yaws is None:yaws=[0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.]
-        yaws=list(yaws)
-        preferred=getattr(self,'preferred_grasp_yaw',None)
-        if preferred is not None:yaws.sort(key=lambda value:abs(value-preferred)>1e-7)
+        from .object_extent import coarse_yaws
+        if yaws is None:
+            yaws=[0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.]
+        yaws=list(dict.fromkeys(yaws))
         hint=getattr(self,'_active_reach_candidate',None)
-        hinted_yaw=hint['yaw_offset_deg'] if hint is not None else None
-        if hinted_yaw is not None:yaws.sort(key=lambda value:abs(value-hinted_yaw)>1e-7)
-        self.total_candidates=len(yaws)*6+int(hinted_yaw is not None and any(abs(y-hinted_yaw)<1e-7 for y in yaws));self.current_candidate=0
-        for yaw in yaws:
-            profiles=('joint_direct','joint_from_grasp','joint_elbow_positive','joint_elbow_negative','direct','outward_8')
-            if hinted_yaw is not None and abs(yaw-hinted_yaw)<1e-7:profiles=('joint_prechecked',)+profiles
-            for profile in profiles:
-                self.current_candidate+=1
-                self.context.set_stage('候选路径',arm=self.cfg['arm'],
-                    candidate=self.current_candidate,total_candidates=self.total_candidates)
-                yield yaw,False,profile
+        preferred=getattr(self,'preferred_grasp_yaw',None)
+        hinted_yaw=hint['yaw_offset_deg'] if hint else None
+        broad=coarse_yaws(yaws,(hinted_yaw,preferred))
+        priority=[]
+        if broad and hinted_yaw is not None and abs(broad[0]-hinted_yaw)<1e-7:
+            priority.append((broad[0],'joint_prechecked'))
+        priority.extend((yaw,'joint_direct') for yaw in broad)
+        profiles=('joint_direct','joint_from_grasp','joint_elbow_positive','joint_elbow_negative','direct','outward_8')
+        fine_yaws=[yaw for yaw,_ in priority[:1]]+yaws
+        order=dict.fromkeys(priority+[(yaw,profile) for yaw in fine_yaws for profile in profiles])
+        self.total_candidates=len(order)
+        self.current_candidate=0
+        for index,(yaw,profile) in enumerate(order,1):
+            self.current_candidate=index
+            self.context.set_stage('候选路径',arm=self.cfg['arm'],
+                candidate=self.current_candidate,total_candidates=self.total_candidates)
+            yield yaw,False,profile
 
     def grasp_attitude_feasible(self,source,tcp,center,rotation,product):
         """先排除抓点不可达或收回终点不兼容的朝向；同一请求不重复逆解。"""
@@ -100,6 +103,8 @@ class VendorGraspPlanner(Planner):
         key=(tuple(np.round(tcp,9)),tuple(np.round(center,9)),tuple(np.round(rotation.ravel(),9)))
         cached=self._attitude_cache.get(key)
         if cached is not None:return cached
+        if hasattr(self,'_wrist_envelope') and not self.wrist_reachable(center,rotation,tcp):
+            self._attitude_cache[key]=False;return False
         if self.cfg.get('fixed_carry_enabled',False) and self.has_common_carry_target():
             _,end_R=self.pose(self.carry_target(source),tcp)
             up=np.asarray(self.cfg['up_torso'])
@@ -181,13 +186,20 @@ class VendorGraspPlanner(Planner):
             position=self.anchor[:3,:3].T@(wrist.translation-self.anchor[:3,3])
         return position+rotation@tcp,rotation.copy()
 
+    def wrist_reachable(self,point,rotation,tcp):
+        from .reach_envelope import WristEnvelope
+        if self._wrist_envelope is None:self._wrist_envelope=WristEnvelope(self,self.source)
+        return self._wrist_envelope.allows(point,rotation,tcp)
+
     def configure_model(self, source):
         self._solve_cache={}
+        self._wrist_envelope=None
+        self._heading_cache={}
+        self._route_geometry_cache={}
         self.source = dict(source)
         self.anchor = self.fk.fk(BASE, TORSO, source)
         tree = ET.parse(self.cfg['urdf_path']).getroot()
-        vendor_config = Path(self.cfg['vendor_control_config']) if self.cfg.get('vendor_control_config') else (
-            Path(self.cfg['vendor_python_path'])/'autolife_robot_arm/configs/robot_v3_1.json')
+        vendor_config = vendor_control_path(self.cfg)
         dead = json.loads(vendor_config.read_text())['MOTOR_DEAD_ZONE']
         waist_bounds = []
         for i, name in enumerate(BODY[2:], 2):
@@ -209,11 +221,12 @@ class VendorGraspPlanner(Planner):
         self.configure_model(source)
         from .vendor_ik_process import VendorIKProcess
         locked={n:source[n] for n in BODY[:2]}
-        if self.solver is None:
+        checkpoint=lambda:self.context.checkpoint()
+        if self.solver is None or self.solver._closed:
             self.solver = VendorIKProcess(self.cfg,self.cfg['urdf_path'],BASE,wrist_frame(self.cfg),
-                                         locked,checkpoint=self.context.checkpoint)
+                                         locked,checkpoint=checkpoint)
         else:
-            self.solver.checkpoint=self.context.checkpoint
+            self.solver.checkpoint=checkpoint
             try:self.solver.request('configure',locked=locked)
             except BaseException:self.close();raise
         try:
@@ -233,9 +246,31 @@ class VendorGraspPlanner(Planner):
         self.bounded_seed_recoveries=0;self._attitude_cache={}
         self.configure_source(source)
         try:
-            plan = super().plan(source, tcp, center, product)
+            return super().plan(source, tcp, center, product)
         except BaseException:
             self.close();raise
+
+    def route_geometry(self,source,tcp,center,product,flexible,yaw_offset=0.):
+        # Every approach profile for the same grasp uses identical contact
+        # geometry. Keep separate entries for low-cost screening and full IK.
+        cache=getattr(self,'_route_geometry_cache',None)
+        if cache is None:return super().route_geometry(source,tcp,center,product,flexible,yaw_offset)
+        key=(id(product),tuple(tcp),tuple(center),flexible,yaw_offset,type(self),
+             getattr(self,'_reach_quick_probe',False),getattr(self,'_native_seed_only',False))
+        if key not in cache:
+            try:result=super().route_geometry(source,tcp,center,product,flexible,yaw_offset)
+            except IKFailure as exc:result=str(exc)
+            cache[key]=(product,result)
+        result=cache[key][1]
+        if isinstance(result,str):raise IKFailure(result)
+        from copy import deepcopy
+        return deepcopy(result)
+
+    def _route(self,source,tcp,center,product,flexible,started,yaw_offset=0.,profile='direct'):
+        plan=super()._route(source,tcp,center,product,flexible,started,yaw_offset,profile)
+        # Reject this candidate inside the search so the next stationary
+        # approach can still succeed if native interpolation changes clearance.
+        self._candidate_stage=0
         # 与原有持物、界面协议兼容：这里只登记7轴复位臂形。
         if 'carry_pose_deg' in plan:
             plan['carry_pose_deg'] = [self.carry_target(source)[n] for n in self.arm_names]
@@ -297,7 +332,7 @@ class VendorGraspPlanner(Planner):
               posture_target=None, global_goal=False, retreat_freedom=0., free_heading=False):
         self.context.checkpoint()
         key=(tuple(sorted(source.items())),tuple(np.asarray(tcp)),tuple(np.asarray(point)),tuple(np.asarray(rotation).ravel()),
-             flexible,limit_deg,global_goal,retreat_freedom,free_heading,
+             flexible,limit_deg,global_goal,retreat_freedom,free_heading,getattr(self,'_native_seed_only',False),
              None if posture_target is None else tuple(np.asarray(posture_target).ravel()))
         cache=getattr(self,'_solve_cache',None)
         if cache is None:self._solve_cache=cache={}
@@ -329,23 +364,24 @@ class VendorGraspPlanner(Planner):
             result = self.solver.request('ik',pose=pose.tolist(),seed=seed.tolist(),
                 lower=lo.tolist(),upper=hi.tolist())
             values = np.asarray(result, float)
-        except (ValueError,OSError) as exc:
-            if not isinstance(exc,ValueError) or not any(t in str(exc) for t in ('LMA解超出','NR/LMA均未找到')):
-                raise IKFailure('原厂IK未收敛：'+str(exc)) from exc
+        except NoIKSolution as exc:
+            if getattr(self,'_native_seed_only',False):raise IKFailure(str(exc)) from exc
+            if hasattr(self,'_wrist_envelope') and not self.wrist_reachable(point,rotation,tcp):
+                raise IKFailure('目标腕部朝向超出当前腰臂几何范围') from exc
             from .bounded_grasp_ik import recover_seed
             improved=recover_seed(self,source,tcp,point,rotation,seed,lo,hi)
             try:
                 values=np.asarray(self.solver.request('ik',pose=pose.tolist(),seed=improved.tolist(),lower=lo.tolist(),upper=hi.tolist()),float)
-            except (ValueError,OSError) as retry:raise IKFailure('有界初值的原厂IK复核失败：'+str(retry)) from retry
+            except NoIKSolution as retry:raise IKFailure('有界初值的原厂IK复核失败：'+str(retry)) from retry
             self.bounded_seed_recoveries=getattr(self,'bounded_seed_recoveries',0)+1
         if values.shape != seed.shape or not np.isfinite(values).all():
-            raise IKFailure('原厂IK未返回完整腰臂关节')
+            raise ValueError('原厂IK未返回完整腰臂关节')
         if np.any(values < lo-1e-6) or np.any(values > hi+1e-6):
             raise IKFailure('原厂IK结果超限')
         q = {**source, **dict(zip(chain_names, np.rad2deg(values).tolist()))}
         position, actual_rotation = self.pose(q, tcp)
         error = np.linalg.norm(position-point)
         angle = Rotation.from_matrix(rotation.T@actual_rotation).magnitude()
-        if error > .003 or angle > np.deg2rad(2.):
+        if error > VENDOR_IK_POSITION_TOLERANCE_M or angle > np.deg2rad(2.):
             raise IKFailure(f'原厂IK位置残差{error*1000:.1f}mm，方向残差{np.rad2deg(angle):.1f}°')
         return q

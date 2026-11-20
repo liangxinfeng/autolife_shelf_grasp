@@ -74,7 +74,7 @@ def test_protocol_two_validates_profiles_before_execution(tmp_path,version):
     from autolife_shelf_grasp_306.demo_protocol import validate_place
     from autolife_handeye_calibration_306.core import ARMS
     for name,data in [('demo_run.json',dict(grasp_plan_id='one',product_id='drink',settings={})),
-                      ('demo_grasp_result.json',dict(status='completed',plan_id='one')),
+                      ('held_object.json',dict(status='completed',plan_id='one')),
                       ('demo_base_result.json',dict(status='completed'))]:
         (tmp_path/name).write_text(json.dumps(data))
     q0=dict.fromkeys(ARMS['left'],0.);q1={**q0,ARMS['left'][0]:10.}

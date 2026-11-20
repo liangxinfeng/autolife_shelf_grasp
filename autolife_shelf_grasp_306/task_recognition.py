@@ -29,4 +29,7 @@ def task_detection_request(target, products):
 
 def infer_scene(perception, frame, store, mode, request=None):
     if request is None:return perception.infer(frame,store,mode)
+    if request.get('cleanup'):
+        from .table_cleanup import inspect_scene
+        return inspect_scene(perception,frame,store,request)
     return perception.infer(frame,store,request['mode'],prompt=request['prompt'])

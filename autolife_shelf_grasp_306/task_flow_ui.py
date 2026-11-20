@@ -3,10 +3,12 @@ import json
 import time
 from copy import deepcopy
 from PyQt5 import QtCore as C, QtWidgets as Q
-from .task_flow import Cursor, KINDS, validate, select_candidates
+from .task_flow import Cursor, KINDS, TargetNotVisible, validate, select_candidates
 from .core import atomic_json
 from .task_pause import defer_call
-from .task_capabilities import require_perception, starts_with_grasp, worker_required_now
+from .task_capabilities import require_perception, worker_required_now
+from .task_runtime import TaskStore
+from .held_receipt import has_held
 
 
 class FlowDialog(Q.QDialog):
@@ -21,11 +23,13 @@ class FlowDialog(Q.QDialog):
         nav_row=Q.QHBoxLayout();layout.addLayout(nav_row)
         self.nav_note=Q.QLabel();self.nav_note.setWordWrap(True);nav_row.addWidget(self.nav_note,1)
         if not owner.ready:
-            capability=Q.QLabel('当前视觉不可用：可编排并运行预录制动作、航点导航和底盘定量。含视觉抓取/放置的流程需恢复视觉后才能运行。')
+            capability=Q.QLabel('当前视觉不可用：动作、导航和底盘步骤可照常运行；流程到达抓取/放置步骤时保留进度，等待视觉恢复。')
             capability.setWordWrap(True);layout.addWidget(capability)
         refresh=Q.QPushButton('刷新航点');refresh.clicked.connect(self.refresh_waypoints);nav_row.addWidget(refresh)
+        types_button=Q.QPushButton('垃圾种类清单');types_button.clicked.connect(self.edit_cleanup_types);nav_row.addWidget(types_button)
+        self.enroll_trash=Q.QPushButton('点选录入垃圾');self.enroll_trash.clicked.connect(self.pick_cleanup_sample);nav_row.addWidget(self.enroll_trash)
         self.navigation_button=Q.QPushButton('导航地图 / 定位');self.navigation_button.clicked.connect(self.navigation_map);nav_row.addWidget(self.navigation_button)
-        self.table = Q.QTableWidget(0, 7); self.table.setHorizontalHeaderLabels(['步骤类型', '航点 / 物品 / 动作名称 / 播报文字','身体高度方式','下降高度(cm)','头部俯仰(°)','执行手臂','动作速度'])
+        self.table = Q.QTableWidget(0, 7); self.table.setHorizontalHeaderLabels(['步骤类型', '航点 / 物品 / 动作名称 / 播报文字','身体高度方式','下降高度(cm)','头部俯仰(°)','执行手臂','动作速度 / 播报策略'])
         for col,width in ((0,105),(2,150),(3,125),(4,155)):self.table.setColumnWidth(col,width)
         self.table.horizontalHeader().setSectionResizeMode(1, Q.QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
@@ -66,6 +70,8 @@ class FlowDialog(Q.QDialog):
 
     def refresh_waypoints(self):
         self.owner.controls()
+        flow=getattr(self.owner,'workflow',None)
+        self.enroll_trash.setEnabled(bool(self.owner.ready and flow and not flow.pending and flow.channels_idle()))
         self.continue_button.setEnabled(self.owner.flow_retry.isEnabled())
         self.continue_button.setToolTip(self.owner.flow_retry.toolTip())
         self.progress.setText(self.owner.flow_label.text())
@@ -93,6 +99,37 @@ class FlowDialog(Q.QDialog):
         if self.owner.workflow.active:self.accept()
         else:self.refresh_waypoints()
 
+    def edit_cleanup_types(self):
+        from .cleanup_catalog import library,save_types
+        try:
+            catalog=library(self.owner.root)
+        except (OSError,ValueError) as exc:
+            Q.QMessageBox.warning(self,'读取垃圾种类失败',str(exc))
+            return
+        dialog=Q.QDialog(self);dialog.setWindowTitle('垃圾种类清单')
+        layout=Q.QVBoxLayout(dialog)
+        layout.addWidget(Q.QLabel('每行一种。自定义识别词可写“烟头 = cigarette butt”。'))
+        editor=Q.QPlainTextEdit('\n'.join(catalog['types']));layout.addWidget(editor)
+        general=Q.QCheckBox('同时识别清单以外有明显废弃特征的物品')
+        general.setChecked(catalog.get('open_waste',bool(catalog['types'])));layout.addWidget(general)
+        buttons=Q.QDialogButtonBox(Q.QDialogButtonBox.Ok|Q.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        while dialog.exec_()==Q.QDialog.Accepted:
+            try:
+                save_types(self.owner.root,editor.toPlainText().splitlines(),general.isChecked())
+                return
+            except (OSError,ValueError) as exc:Q.QMessageBox.warning(self,'未保存',str(exc))
+
+    def pick_cleanup_sample(self):
+        from .cleanup_enrollment_ui import SampleDialog
+        dialog=SampleDialog(self);self.owner.cleanup_dialog=dialog
+        try:
+            dialog.freeze()
+            dialog.exec_()
+        finally:
+            self.owner.cleanup_dialog=None
+            dialog.deleteLater()
+
     def choices(self, kind):
         if kind == 'navigate':
             from .navigation_logic import waypoint_names
@@ -104,11 +141,11 @@ class FlowDialog(Q.QDialog):
         if kind=='tts':return []
         return ['当前桌面']
 
-    def add(self, kind, target, posture=None, base=None, execution_arm="original", action_speed_percent=None):
+    def add(self, kind, target, posture=None, base=None, execution_arm="original", action_speed_percent=None, required=False):
         row = self.table.rowCount(); self.table.insertRow(row)
         item = Q.QTableWidgetItem(KINDS[kind]); item.setData(C.Qt.UserRole, kind)
         item.setFlags(item.flags() & ~C.Qt.ItemIsEditable); self.table.setItem(row, 0, item)
-        box = Q.QComboBox(); box.setEditable(kind != 'place'); box.addItems(self.choices(kind))
+        box = Q.QComboBox(); box.setEditable(kind not in ('place','cleanup')); box.addItems(self.choices(kind))
         if kind=='navigate':
             box.setProperty('waypoint_choices',self.choices(kind))
             box.setMinimumContentsLength(12);box.setMaxVisibleItems(16)
@@ -136,7 +173,8 @@ class FlowDialog(Q.QDialog):
         direction.currentIndexChanged.connect(sync_height);height.setValue(p.get('lowering_cm',0));sync_height()
         if kind=='action':box.currentTextChanged.connect(sync_height)
         head=Q.QWidget();head_row=Q.QHBoxLayout(head);head_row.setContentsMargins(2,0,2,0)
-        enable=Q.QCheckBox('设置');angle=Q.QDoubleSpinBox();angle.setRange(-30,45);angle.setDecimals(1);angle.setSuffix('°')
+        from .step_posture import head_pitch_limits
+        enable=Q.QCheckBox('设置');angle=Q.QDoubleSpinBox();angle.setDecimals(1);angle.setRange(*head_pitch_limits());angle.setSuffix('°')
         enable.setChecked(p.get('head_pitch_deg') is not None);angle.setValue(p.get('head_pitch_deg') or 0)
         # Editing is always available; a user edit opts this field into the step.
         if direction.currentData()!='recorded':height.setToolTip('直接输入高度会启用正向下蹲；沿用动作记录时，完整回放记录中的高度变化。')
@@ -151,6 +189,9 @@ class FlowDialog(Q.QDialog):
         self.table.setCellWidget(row,5,arm);self.table.setColumnWidth(5,160)
         from .action_speed_ui import ActionSpeedCell
         speed=ActionSpeedCell(self.table,action_speed_percent) if kind=='action' else Q.QLabel('—')
+        if kind=='tts':
+            speed=Q.QCheckBox('播报必须成功');speed.setChecked(required)
+            speed.setToolTip('未勾选：播报失败记录提示并继续；勾选：失败后保留任务等待恢复。')
         self.table.setCellWidget(row,6,speed);self.table.setColumnWidth(6,165)
         if kind=='tts':
             box.setStyleSheet('QComboBox::drop-down {width:0px;} QComboBox::down-arrow {image:none;}')
@@ -166,6 +207,7 @@ class FlowDialog(Q.QDialog):
             kind=self.table.item(i,0).data(C.Qt.UserRole)
             target='底盘定量动作' if kind=='base' else self.table.cellWidget(i,1).currentText()
             row=dict(kind=kind,target=target)
+            if kind=='tts':row['required']=self.table.cellWidget(i,6).isChecked()
             if kind!='tts':
                 row['posture']=dict(body_mode=self.table.cellWidget(i,2).currentData(),
                     lowering_cm=self.table.cellWidget(i,3).value(),
@@ -180,7 +222,7 @@ class FlowDialog(Q.QDialog):
 
     def load(self, name):
         self.table.setRowCount(0); self.name.setText('' if name == '新建流程' else name)
-        for row in self.library.get(name, {}).get('steps', []): self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'))
+        for row in self.library.get(name, {}).get('steps', []): self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'),row.get('required',False))
 
     def remove(self):
         if self.table.currentRow() >= 0: self.table.removeRow(self.table.currentRow())
@@ -191,7 +233,7 @@ class FlowDialog(Q.QDialog):
         try: rows = self.record()['steps']
         except ValueError: return
         rows[i], rows[j] = rows[j], rows[i]; self.table.setRowCount(0)
-        for row in rows: self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'))
+        for row in rows: self.add(row['kind'], row['target'],row.get('posture'),row.get('base'),row.get('execution_arm','original'),row.get('action_speed_percent'),row.get('required',False))
         self.table.selectRow(j)
 
     def save(self):
@@ -237,78 +279,184 @@ class Workflow(C.QObject):
         self.actions = {}; self.map = None
         self.failed_phase=''
         self.candidates=[];self.candidate_failures=[];self.candidate_index=0
+        self.stationary_only=False;self.dock_candidates=[]
         self.posture_resume=None;self.nav_arrived=False;self.nav_posture_done=True;self.nav_posture_started=False
         owner.studio.completed.connect(self.action_done)
         from .base_sequence_ui import BaseRunner
         self.base=BaseRunner(owner);self.base.completed.connect(self.base_done)
         from .task_speech import TaskSpeech
         self.speech=TaskSpeech(owner);self.speech.completed.connect(self.speech_done)
+        self.store=TaskStore(owner.root/'data/task_runtime.json')
+        self.worker_request=None
+        self.recovery_timer=C.QTimer(self);self.recovery_timer.setInterval(250)
+        self.recovery_timer.timeout.connect(self.recover_tick);self.recovery_timer.start()
+        C.QTimer.singleShot(0,self.restore_pending)
 
     @property
-    def active(self): return bool(self.cursor and self.cursor.active)
+    def active(self): return bool(self.cursor and self.cursor.state in ('running','paused'))
+
+    @property
+    def pending(self): return bool(self.cursor and self.cursor.pending)
+
+    @property
+    def waiting(self): return bool(self.cursor and self.cursor.state=='waiting')
+
+    def channels_idle(self):
+        o=self.owner;mobile=getattr(o,'mobile_reach',None);visual=getattr(o.studio,'visual',None)
+        return not (o.busy or o.motion or o.cancel_pending or o.demo_active or o.placement_active
+                    or o.navigation.inflight or o.studio.moving() or self.base.moving()
+                    or (mobile and (mobile.active or mobile.proc)) or (visual and visual.busy)
+                    or getattr(o,'parallel_prepare',None) is not None)
+
+    def note_worker_request(self,request_id):
+        if self.active:self.worker_request=request_id
+
+    def mark_dispatch(self,phase=None):
+        if self.active:
+            self.cursor.metadata['action_hold_grippers']=getattr(self,'action_hold_grippers',False)
+            self.cursor.dispatch(phase or self.phase)
+
+    def write_context(self):
+        self.cursor.phase=self.phase
+        self.cursor.metadata.update(map=self.map,actions=self.actions,failed_phase=self.failed_phase,
+                                    action_hold_grippers=getattr(self,'action_hold_grippers',False))
+        self.cursor.persist()
+        atomic_json(self.owner.run/'task_flow.json',dict(run_id=self.cursor.run_id,
+            task_id=self.cursor.task_id,cycle_index=self.cursor.cycle_index,
+            attempt_id=self.cursor.attempt_id,map=self.map,record=self.cursor.record,
+            actions=self.actions,retry_index=self.cursor.index))
+
+    def restore_pending(self):
+        if self.cursor is not None:return
+        try:
+            cursor=Cursor.restore(self.store)
+            if cursor is None:return
+            cursor.record=validate(cursor.record)
+            self.cursor=cursor;self.map=cursor.metadata.get('map');self.actions=cursor.metadata.get('actions',{})
+            self.failed_phase=cursor.phase or cursor.metadata.get('failed_phase') or 'recovered'
+            self.action_hold_grippers=cursor.metadata.get('action_hold_grippers',False)
+            saved_session=cursor.metadata.get('session_name')
+            if saved_session and saved_session!=self.owner.run.name:
+                cursor.reason+='；原会话资料缺失，需恢复持物来源后才能继续放置，或取消后重新抓取'
+                cursor.persist()
+            self.phase='waiting';self.worker_request=None
+            self.owner.flow_label.setText('任务已保留 · '+cursor.reason)
+            self.owner.controls()
+        except (ValueError,KeyError,TypeError,OSError) as exc:
+            self.owner.flow_label.setText('任务恢复记录不可用，未自动执行：'+str(exc))
+
+    def recover_tick(self):
+        if not self.waiting or self.cursor.resume!='automatic':return
+        auto=getattr(self.owner,'automatic',None)
+        if auto and auto.paused:return
+        if time.monotonic()<self.cursor.retry_at or not self.channels_idle():return
+        if not self.owner.ready:return
+        self.retry_current(automatic=True)
+
+    def cancel(self,reason='用户取消任务'):
+        if not self.pending:return
+        try:self.cursor.cancel(reason)
+        except OSError as exc:self.owner.flow_label.setText('任务已取消；状态保存失败：'+str(exc))
+        finally:
+            self.phase='';self.worker_request=None;self.speech.stop()
 
     @property
     def retry_available(self):
-        return bool(self.cursor and not self.active and self.failed_phase and
+        return bool(self.waiting and self.failed_phase and
                     0<=self.cursor.index<len(self.cursor.record['steps']))
 
     def stopped(self,reason):
-        if not self.active:return
+        if not self.pending:return
         if hasattr(self,'speech'):self.speech.stop()
-        self.failed_phase=self.phase;self.cursor.stop(reason);self.phase=''
+        if self.phase!='waiting':self.failed_phase=self.phase
+        self.cursor.wait(reason);self.phase='waiting';self.write_context()
 
-    def retry_current(self):
+    def retry_current(self,*,automatic=False):
         """Explicit retry of this step only. Never resume a stale motor path."""
         o=self.owner
+        if getattr(self,'confirming_retry',False):return
         try:
             if not self.retry_available:raise ValueError('没有已停止的步骤可重试')
-            if (o.busy or o.motion or o.cancel_pending or o.demo_active or o.placement_active
-                    or o.navigation.inflight or o.studio.moving() or self.base.moving()):
+            if not self.channels_idle():
                 raise ValueError('请等待前一次操作完全停止、后台就绪后再重试')
-            row=self.cursor.step;kind=row['kind'];scan_only=False
+            row=self.cursor.step;kind=row['kind'];scan_only=False;place_only=False
             require_perception(o, {'steps':[row]})
             if kind=='navigate':
                 data=o.navigation.data
                 if (time.time()-data.get('snapshot_time',0)>2 or not data.get('ready') or not data.get('pose')
                         or data.get('map_fault') or data.get('active_map')!=self.map or row['target'] not in data.get('names',[])):
                     raise ValueError('请先恢复原地图的导航与定位，再重试该航点')
-            if kind=='grasp':
+            if kind in ('grasp','cleanup'):
                 # 手动取走物品后允许明确重试，不让上次抓取文件永久锁住步骤。
-                path=o.run/'prepare_result.json'
-                prepared=json.loads(path.read_text('utf-8')) if path.exists() else {}
-                scan_only=self.failed_phase in ('scan','plan','confirm') and prepared.get('status')=='prepared'
-                detail='重新识别并规划；规划通过即自动抓取，不重复复位。' if scan_only else '将重新复位并张开夹爪，再识别规划；请先确认双夹爪空载，未夹住物品。'
-                detail+=' 请确认双爪已空载；确认后清理旧持物记录。'
+                scan_only=self.failed_phase in ('scan','plan','confirm') and self.cursor.effect=='none'
+                detail='重新识别并规划；抓取使用的夹爪应已空出。'
             elif kind=='place':
                 from .placement_request import held_grasp
                 held_grasp(o.run)
+                place_only=self.failed_phase=='place' and self.cursor.effect=='none'
                 detail='重新识别桌面并规划放置；请确认物品仍夹稳、未在上次操作中放下。'
             elif kind=='action':detail='从该示教动作的第一帧重新执行，不重复之前的导航或抓取。请确认当前姿态和现场适合重做。'
-            elif kind=='base':detail='将从当前位置重新执行本步骤全部底盘动作，已经走过的部分也会重做。请确认当前位置适合重新执行；否则先修改流程。'
+            elif kind=='base' and self.cursor.effect!='none':
+                detail='底盘可能已部分移动。请现场核对本步骤全部位移和转向是否已经完成。仅在停稳并确认实际到达本步最终目标时选“是”，记录本步完成并继续；否则选“否”保留任务，或取消后重新编排剩余位移。'
+            elif kind=='base':detail='尚未下发底盘动作，将执行本步骤。'
             else:detail='从当前位置重新规划到该航点，不重复之前已完成的步骤。'
-            if Q.QMessageBox.question(o,'重试当前步骤',
-                    f'第{self.cursor.index+1}步 · {KINDS[kind]} · {row["target"]}\n{detail}\n请清空运动范围并准备实体急停，是否重试？',
-                    defaultButton=Q.QMessageBox.No)!=Q.QMessageBox.Yes:return
-            if kind=='grasp':
-                from .task_pause import archive_held
-                archive_held(o.run)
+            reconcile=kind=='base' and self.cursor.effect!='none'
+            if not automatic:
+                token=self.cursor.token
+                self.confirming_retry=True
+                try:
+                    answer=Q.QMessageBox.question(o,'核对底盘终点' if reconcile else '重试当前步骤',
+                        f'第{self.cursor.index+1}步 · {KINDS[kind]} · {row["target"]}\n{detail}',
+                        defaultButton=Q.QMessageBox.No)
+                finally:self.confirming_retry=False
+                if (answer!=Q.QMessageBox.Yes or not self.retry_available or
+                        self.cursor.token!=token or not self.channels_idle()):return
+            if reconcile:
+                if automatic:return
+                self.cursor.warn('现场已确认底盘完成本步全部位移与转向')
             o.studio.release();o.invalidate_plan();self.plan_id=None;self.posture_resume=None
-            self.cursor.retry();self.failed_phase=''
-            atomic_json(o.run/'task_flow.json',dict(run_id=self.cursor.run_id,map=self.map,record=self.cursor.record,
-                        actions=self.actions,retry_index=self.cursor.index))
+            if reconcile:
+                # Keep the durable unknown-effect checkpoint until complete()
+                # atomically advances the index. Never persist a fresh move.
+                self.cursor.state='running'
+            else:
+                self.cursor.retry(confirmed=not automatic)
+                self.write_context()
+            self.failed_phase='';self.worker_request=None
+            auto=getattr(o,'automatic',None)
+            if auto and not auto.active and self.cursor.metadata.get('automatic'):
+                saved=self.cursor.metadata['automatic']
+                auto.active=True;auto.phase='running';auto.paused=False;auto.task_id=self.cursor.task_id
+                auto.record=deepcopy(self.cursor.record);auto.actions=self.snapshot_actions(auto.record,self.actions);auto.map=self.map
+                for key in ('task_name','mode','limit','interval_s','completed'):setattr(auto,key,saved[key])
+            if auto and auto.active:
+                auto.run_id=self.cursor.run_id
+                if not automatic:
+                    auto.paused=False;auto.deferred.clear();auto.deferred_event=None
+                    (o.run/'task_pause').unlink(missing_ok=True)
             (o.run/'stop').unlink(missing_ok=True)
-            if scan_only:
+            if reconcile:self.advance()
+            elif scan_only:
                 o.flow_label.setText(f'重试第{self.cursor.index+1}步 · 重新识别与规划')
                 self.start_scan();o.controls()
-            elif kind=='action':
-                # The initial handoff consumed held_object.json. Preserve its
-                # grip policy when retrying the same action, not a new task.
-                self.action_hold_grippers=getattr(self,'action_hold_grippers',False)
-                self.phase='action';self.adjust_posture(self.start_fixed_action);o.controls()
+            elif place_only:
+                self.start_place();o.controls()
             else:self.next()
         except Exception as exc:
             if self.active:self.fail(str(exc))
+            elif automatic:
+                self.cursor.wait(str(exc));o.flow_label.setText('任务保留 · '+str(exc));o.controls()
             else:Q.QMessageBox.warning(o,'暂不能重试',str(exc))
+
+    def snapshot_actions(self,record,source=None):
+        """Freeze each referenced action once. Navigation and grasp need no library I/O."""
+        names=dict.fromkeys(row['target'] for row in record['steps'] if row['kind']=='action')
+        if not names:return {}
+        actions=self.owner.studio.records(names) if source is None else source
+        from .action_studio import full_record
+        for name in names:
+            if name not in actions:raise ValueError('动作库中没有：'+name)
+        return {name:full_record(actions[name]) for name in names}
 
     def start(self, record, *, confirmed=False, actions_snapshot=None, expected_map=None):
         o = self.owner
@@ -316,15 +464,10 @@ class Workflow(C.QObject):
         if auto and auto.active and not (confirmed and auto.launching): raise ValueError('自动任务正在运行')
         if o.cancel_pending: raise ValueError('正在停止，请等待完成')
         if getattr(o,'parallel_prepare',None) is not None:raise ValueError('上一准备进程正在退出')
-        if self.active or o.busy or o.motion or o.demo_active or o.placement_active or o.navigation.inflight or self.base.moving() or o.studio.moving(): raise ValueError('当前操作未结束')
-        record = validate(record); require_perception(o, record)
-        actions = deepcopy(actions_snapshot) if actions_snapshot is not None else o.studio.records()
-        from .action_studio import full_record
-        self.actions = {}
-        for row in record['steps']:
-            if row['kind'] == 'action':
-                if row['target'] not in actions: raise ValueError('动作库中没有：'+row['target'])
-                self.actions[row['target']] = full_record(actions[row['target']])
+        if self.pending or not self.channels_idle(): raise ValueError('当前任务尚未结束，请先恢复或取消')
+        record = validate(record)
+        # The automatic session freezes its selected actions before the first cycle.
+        self.actions=auto.actions if auto and auto.active else self.snapshot_actions(record,actions_snapshot)
         data = o.navigation.data
         if any(r['kind']=='navigate' for r in record['steps']):
             if expected_map is not None and data.get('active_map')!=expected_map: raise ValueError('地图已变化，请重新选择并启动任务')
@@ -336,17 +479,18 @@ class Workflow(C.QObject):
         text = '\n'.join(f'{i+1}. {KINDS[r["kind"]]} · {r["target"]}'+(' · 含身体/头部调姿' if r.get('posture') else '') for i,r in enumerate(record['steps']))
         from .base_sequence import summary
         text+=''.join('\n底盘：'+summary(r['base']) for r in record['steps'] if r['kind']=='base')
-        grasp_mode='本次任务启动后，规划通过即自动抓取；每次抓取步骤会在识别期间保持式使能并张开双爪，请确保双手空载。放置和示教动作保持夹持。'
-        entry=('新任务将从抓取开始，请确认双爪空载；确认后清理上次独立测试的持物记录。' if starts_with_grasp(record) else '将按编排执行，保留现有持物信息供放置或动作使用。')
-        if not confirmed and Q.QMessageBox.question(o, '确认任务流程', text+'\n\n将自动执行导航、放置和示教动作（包括腰腿与夹爪）。'+entry+grasp_mode+'\n示教动作没有门阻力检测，请确认现场与示教时一致、全程看护并准备实体急停。', defaultButton=Q.QMessageBox.No) != Q.QMessageBox.Yes: return
-        # 与自动任务入口一致：已确认空载的新任务不继承独立抓取测试的状态。
-        if starts_with_grasp(record):
-            from .task_pause import archive_held
-            archive_held(o.run)
-        o.studio.release(); o.demo.setChecked(False); self.cursor = Cursor(record); self.map = data.get('active_map');self.failed_phase=''
+        grasp_mode='抓取前请确保所用夹爪可用。放置使用最近完成的抓取记录。'
+        if not confirmed and Q.QMessageBox.question(o, '确认任务流程', text+'\n\n将自动执行导航、放置和示教动作（包括腰腿与夹爪）。'+grasp_mode+'\n示教动作没有门阻力检测，请确认现场与示教时一致、全程看护并准备实体急停。', defaultButton=Q.QMessageBox.No) != Q.QMessageBox.Yes: return
+        metadata=dict(map=data.get('active_map'),actions=self.actions,session_name=o.run.name)
+        if auto and auto.active:
+            metadata['automatic']=dict(task_name=auto.task_name,mode=auto.mode,limit=auto.limit,
+                interval_s=auto.interval_s,completed=auto.completed)
+        o.studio.release(); o.demo.setChecked(False)
+        self.cursor=Cursor(record,store=self.store,task_id=getattr(auto,'task_id',None) if auto and auto.active else None,
+            cycle_index=auto.completed if auto and auto.active else 0,metadata=metadata)
+        self.map=data.get('active_map');self.failed_phase='';self.worker_request=None
         (o.run/'stop').unlink(missing_ok=True)
-        atomic_json(o.run/'task_flow.json', dict(run_id=self.cursor.run_id, map=self.map,
-            record=record, actions=self.actions))
+        self.write_context()
         self.started.emit(self.cursor.run_id)
         self.next()
 
@@ -358,9 +502,10 @@ class Workflow(C.QObject):
         o.flow_label.setText(f'任务 {self.cursor.index+1}/{len(self.cursor.record["steps"])} · {KINDS[row["kind"]]} · {row["target"]}'+({'left':' · 左手镜像执行','right':' · 右手镜像执行'}.get(row.get('execution_arm'),'')))
         try:
             require_perception(o, {'steps':[row]})
-            if row['kind'] in ('base','grasp','place'):o.studio.release()
+            if row['kind'] in ('base','grasp','cleanup','place'):o.studio.release()
             if row['kind']=='tts':
-                self.speech.start(self.cursor.token,row['target'])
+                try:self.speech.start(self.cursor.token,row['target'])
+                except Exception as exc:self.speech_done(self.cursor.token,False,str(exc))
             elif row['kind']=='base':
                 if not row['base']['enabled']:self.advance();return
                 self.adjust_posture(self.start_base)
@@ -371,25 +516,36 @@ class Workflow(C.QObject):
                     # spend the whole navigation leg enabling a new controller.
                     self.phase='prepare_navigation'
                     o.flow_label.setText('出发准备：保持当前关节姿态；出发后同步调姿')
-                    o.studio.prepare_posture(self.cursor.token+':nav_prepare')
+                    self.mark_dispatch('prepare_navigation');o.studio.prepare_posture(self.cursor.token+':nav_prepare')
                 else:self.send_navigation()
             elif row['kind']=='action':
                 held=o.run/'held_object.json'
-                receipt=json.loads(held.read_text('utf-8')) if held.exists() else {}
-                self.action_hold_grippers=receipt.get('status')=='completed' and bool(receipt.get('plan_id'))
+                if self.cursor.metadata.get('action_entry_step')==self.cursor.step_id:
+                    self.action_hold_grippers=self.cursor.metadata.get('action_hold_grippers',False)
+                else:
+                    receipt=json.loads(held.read_text('utf-8')) if held.exists() else {}
+                    self.action_hold_grippers=receipt.get('status')=='completed' and bool(receipt.get('plan_id'))
+                    self.cursor.metadata.update(action_entry_step=self.cursor.step_id,
+                                                action_hold_grippers=self.action_hold_grippers)
+                    self.cursor.persist()  # Preserve grip policy BEFORE consuming its receipt.
                 # A user-authored all-joint action may open the gripper; stale
                 # grasp provenance must not be reused for automatic placement.
                 (o.run/'held_object.json').unlink(missing_ok=True)
                 (o.run/'prepare_result.json').unlink(missing_ok=True)
                 self.adjust_posture(self.start_fixed_action)
+            elif row['kind']=='cleanup':
+                self.adjust_posture(self.start_scan)
             elif row['kind']=='grasp':
-                if (o.run/'held_object.json').exists(): raise ValueError('仍有持物记录；先放置或执行已确认的释放动作，不能自动张爪复位')
                 from .grasp_start import requires_reset
-                if requires_reset(o.root):
-                    self.phase='prepare'; o.send('auto_prepare' if getattr(o,'automatic',None) and o.automatic.active else 'prepare')
+                if requires_reset(o.root) and not has_held(o.run):
+                    self.phase='prepare';self.mark_dispatch('prepare');o.send('auto_prepare' if getattr(o,'automatic',None) and o.automatic.active else 'prepare')
                 else:self.adjust_posture(self.start_scan)
             else:
-                self.adjust_posture(self.start_place)
+                last=self.cursor.metadata.get('cleanup_result',{})
+                if last.get('index')==self.cursor.index-1 and last.get('picked') is None:
+                    self.cursor.warn('本轮清理没有抓到物品，跳过相邻放置步骤')
+                    self.advance()
+                else:self.adjust_posture(self.start_place)
             o.controls()
         except Exception as exc: self.fail(str(exc))
 
@@ -397,6 +553,7 @@ class Workflow(C.QObject):
         if getattr(self.owner,'automatic',None) and defer_call(self.owner,self.send_navigation):return
         if not self.active:return
         self.phase='navigate'
+        self.mark_dispatch('navigate')
         self.owner.navigation.command('navigate',name=self.cursor.step['target'],map=self.map,
             run_id=self.cursor.run_id,leg=self.cursor.token,workflow=True)
         self.owner.flow_label.setText('正在出发至 '+self.cursor.step['target'])
@@ -409,6 +566,7 @@ class Workflow(C.QObject):
         self.posture_resume=resume
         if self.phase!='navigate':self.phase='posture'
         self.owner.flow_label.setText('任务调姿中 · 保持手臂与夹爪；导航步骤会同时行驶')
+        self.mark_dispatch('posture')
         self.owner.studio.adjust_posture(self.cursor.token+':posture',self.cursor.step['posture'],
             keep_session=self.cursor.step['kind'] in ('navigate','action'))
         self.owner.controls()
@@ -418,12 +576,14 @@ class Workflow(C.QObject):
         from .action_speed import apply
         record=apply(self.actions[self.cursor.step['target']],self.cursor.step.get('action_speed_percent'))
         if self.cursor.step.get('execution_arm','original')!='original':record['retarget_arm']=self.cursor.step['execution_arm']
-        self.phase='action';self.owner.studio.execute(self.cursor.token,record,
+        self.phase='action';self.mark_dispatch('action');self.owner.studio.execute(self.cursor.token,record,
             preserve_grippers_at_entry=self.action_hold_grippers,keep_session=True)
 
     def speech_done(self,token,success,text):
         if not self.active or self.phase!='tts' or token!=self.cursor.token:return
         if success:self.advance()
+        elif not self.cursor.step.get('required',False):
+            self.cursor.warn(text);self.owner.status.setText('播报未完成，继续任务：'+text);self.advance()
         else:self.fail(text)
 
     def start_base(self):
@@ -431,6 +591,7 @@ class Workflow(C.QObject):
         if self.owner.navigation.inflight:raise ValueError('导航尚未停止，未开始定量移动')
         self.phase='base';self.owner.studio.release();self.owner.invalidate_plan();self.owner.live()
         (self.owner.run/'prepare_result.json').unlink(missing_ok=True)
+        self.mark_dispatch('base')
         self.base.start(self.cursor.token)
 
     def base_done(self,token,success,text):
@@ -443,34 +604,72 @@ class Workflow(C.QObject):
         from .placement_request import new_standalone_request
         from .demo_config import load
         o=self.owner;self.phase='place';o.demo_context=new_standalone_request(o.run,load(o.root))
-        from .parallel_prepare_ui import start
-        start(o,'place')
+        # Perception/planning are read-only. Hardware is acquired only by the
+        # executor after an executable plan exists, so retries cannot reopen jaws.
+        self.cursor.effect='none';self.write_context()
         o.placement_active=True;o.demo_phase='planning';o.send('standalone_place')
 
     def start_scan(self):
         if getattr(self.owner,'automatic',None) and defer_call(self.owner,self.start_scan):return
+        if self.cursor.step['kind']=='cleanup':
+            from .cleanup_catalog import library
+            self.cleanup_items=[];self.cleanup_failures={}
+            catalog=library(self.owner.root);names=catalog['types']
+            if not names and not catalog.get('open_waste',False):
+                self.finish_cleanup(None,'垃圾种类清单为空，未扫描桌面。')
+                return
+            self.phase='scan';self.cursor.effect='none';self.write_context()
+            self.owner.send('scan_task',cleanup=True,types=names)
+            return
         o=self.owner;path=o.root/'data/products.json'
         products=json.loads(path.read_text()).get('products',[]) if path.exists() else []
         from .task_recognition import task_detection_request
         target=self.cursor.step['target'];request=task_detection_request(target,products)
         self.semantic_target=request['semantic']
-        from .parallel_prepare_ui import start
-        start(o,'grasp')
-        self.phase='scan';o.send('scan_task',target=target)
+        self.phase='scan';self.cursor.effect='none';self.write_context();o.send('scan_task',target=target)
 
     def plan_next_candidate(self):
+        if not self.active:return
         if getattr(self.owner,'automatic',None) and defer_call(self.owner,self.plan_next_candidate):return
-        if not self.active or self.candidate_index>=len(self.candidates):
+        o=self.owner
+        rows={item['id']:i for i,item in enumerate(o.items)}
+        cleanup=self.cursor.step['kind']=='cleanup'
+        if cleanup:
+            while self.candidate_index<len(self.candidates) and self.candidates[self.candidate_index] not in rows:
+                self.cleanup_failures[self.candidates[self.candidate_index]]='所选物品已离开本轮识别列表'
+                self.candidate_index+=1
+        # Check every matching object here before requesting a different dock.
+        # A new plan request reobserves the selected target and robot state.
+        if not cleanup and self.stationary_only and self.candidate_index==len(self.candidates) and self.dock_candidates:
+            self.candidates=self.dock_candidates
+            self.stationary_only=False;self.candidate_index=0
+        if self.candidate_index>=len(self.candidates):
+            if cleanup:
+                self.finish_cleanup(None)
+                return
             reason='；'.join(self.candidate_failures) or '没有可用识别目标'
             atomic_json(self.owner.run/'task_candidate_selection.json',dict(token=self.cursor.token,
                 candidates=self.candidates,selected=None,failures=self.candidate_failures))
             raise ValueError('当前物品无法抓取：'+reason)
-        o=self.owner;instance=self.candidates[self.candidate_index];self.candidate_index+=1
-        o.list.setCurrentRow(next(i for i,v in enumerate(o.items) if v['id']==instance))
-        self.phase='plan';o.send('plan',id=instance)
+        instance=self.candidates[self.candidate_index];self.candidate_index+=1
+        o.list.setCurrentRow(rows[instance])
+        self.phase='plan';o.send('plan',id=instance,stationary_only=self.stationary_only)
         o.flow_label.setText(f'自动选择 {self.cursor.step["target"]} · 候选 {self.candidate_index}/{len(self.candidates)} · 正在规划')
         atomic_json(o.run/'task_candidate_selection.json',dict(token=self.cursor.token,
             candidates=self.candidates,selected=instance,failures=self.candidate_failures))
+
+    def finish_cleanup(self,picked,note=''):
+        from .table_cleanup import report,skip_reason
+        result=report(self.cleanup_items,self.cleanup_failures,picked)
+        if note:result.update(text=note,remaining=None)
+        result.update(index=self.cursor.index,step_id=self.cursor.step_id)
+        if picked is None:
+            atomic_json(self.owner.run/'task_candidate_selection.json',dict(token=self.cursor.token,
+                candidates=[v['id'] for v in self.cleanup_items if not skip_reason(v)],
+                selected=None,items=result['items'],note=note))
+        self.cursor.metadata['cleanup_result']=result
+        self.owner.status.setText(result['text'])
+        self.advance()
 
     def navigation_started(self,data):
         if not self.active or self.phase!='navigate' or data.get('run_id')!=self.cursor.run_id or data.get('leg')!=self.cursor.token:return
@@ -490,29 +689,65 @@ class Workflow(C.QObject):
         if self.cursor.index==len(self.cursor.record['steps'])-1:
             try:self.owner.studio.release()
             except Exception as exc:self.fail('结束控制交接：'+str(exc));return
-        self.cursor.complete(self.cursor.token)
-        if self.active: C.QTimer.singleShot(0, self.next)
+        try:self.cursor.complete(self.cursor.token)
+        except OSError as exc:
+            self.fail('完成回执保存失败，当前步骤未推进：'+str(exc));return
+        # Close the completed phase before the next Qt turn. A duplicate grasp
+        # receipt carries a plan_id, not a step token, and must not skip a step.
+        self.phase='';self.plan_id=None
+        if self.active:
+            token=self.cursor.token
+            C.QTimer.singleShot(0,lambda:self.next() if self.active and self.cursor.token==token else None)
         else:
-            self.phase=''; self.owner.flow_label.setText('任务流程已完成'); self.owner.controls()
+            summary=self.cursor.metadata.get('cleanup_result',{}).get('text','')
+            self.phase=''; self.owner.flow_label.setText('任务流程已完成'+('\n'+summary if summary else '')); self.owner.controls()
             self.completed.emit(self.cursor.run_id)
 
-    def fail(self, reason):
+    def fail(self, reason,*,retryable=False,await_input=False):
         if not self.active: return
-        self.owner.stop_motion(reason=reason,source='workflow')
-        self.owner.flow_label.setText('任务停止：'+reason); self.owner.controls()
+        readonly=self.phase in ('scan','plan','confirm') and self.cursor.effect=='none' and self.channels_idle()
+        self.failed_phase=self.phase
+        try:
+            self.cursor.wait(reason,retryable=retryable,await_input=await_input)
+            self.phase='waiting';self.worker_request=None;self.write_context()
+        except OSError as exc:
+            self.cursor.state='waiting';self.cursor.resume='operator'
+            reason=str(reason)+'；任务状态保存失败：'+str(exc)
+            self.cursor.reason=reason;self.phase='waiting';self.worker_request=None
+        finally:
+            if readonly:self.owner.invalidate_plan()
+            else:self.owner.stop_motion(reason=reason,source='workflow_wait')
+        suffix=' · 将重新识别规划' if self.cursor.resume=='automatic' else ' · 等待确认后恢复'
+        self.owner.flow_label.setText('任务已保留：'+reason+suffix);self.owner.controls()
 
     def worker_event(self, data):
         if not self.active: return
+        if 'request_id' in data and data['request_id']!=self.worker_request:return
         o=self.owner; kind=data.get('event')
         try:
             if kind in ('error','fatal','vision_unavailable'):
-                if not worker_required_now(o):return
+                if not (worker_required_now(o) or (self.phase=='place' and self.cursor.effect=='none')):return
                 if kind=='error' and self.phase=='plan' and data.get('candidate_unavailable'):
                     self.candidate_failures.append(f'#{self.candidates[self.candidate_index-1]}: '+data['text'])
+                    if self.cursor.step['kind']=='cleanup':
+                        self.cleanup_failures[self.candidates[self.candidate_index-1]]=data['text']
+                    elif self.stationary_only and data.get('dock_eligible') is True:
+                        self.dock_candidates.append(self.candidates[self.candidate_index-1])
                     self.plan_next_candidate();return
                 raise ValueError(data['text'])
             if kind=='reset_planned' and data.get('blockers'): raise ValueError('；'.join(data['blockers']))
             if kind=='scene' and self.phase=='scan':
+                if self.cursor.step['kind']=='cleanup':
+                    from .table_cleanup import candidates
+                    if not (data.get('task_recognition') or {}).get('cleanup'):
+                        raise ValueError('清理识别回执与当前步骤不一致')
+                    if not data['task_recognition'].get('table_confirmed'):
+                        self.finish_cleanup(None,'本轮未确认桌面，已跳过清理。桌上剩余项未知。')
+                        return
+                    self.cleanup_items=deepcopy(o.items)
+                    self.candidates=candidates(self.cleanup_items);self.candidate_index=0
+                    self.stationary_only=True;self.dock_candidates=[];self.candidate_failures=[]
+                    self.plan_next_candidate();return
                 path=o.root/'data/products.json'; products=json.loads(path.read_text()).get('products', []) if path.exists() else []
                 target=self.cursor.step['target']
                 if data.get('task_recognition') is not None:
@@ -520,6 +755,8 @@ class Workflow(C.QObject):
                     if request['target']!=target:raise ValueError('识别结果与当前任务物品不一致')
                     self.semantic_target=request['semantic']
                 self.candidates=select_candidates(o.items,target,products,semantic=self.semantic_target)
+                self.stationary_only=len(self.candidates)>1 and o.mobile_reach_enabled.isChecked()
+                self.dock_candidates=[]
                 self.candidate_index=0;self.candidate_failures=[];self.plan_id=None
                 self.plan_next_candidate()
             elif kind=='planned' and self.phase=='plan':
@@ -529,19 +766,38 @@ class Workflow(C.QObject):
                 o.flow_label.setText('路径已通过 · 准备自动抓取' if o.auto_grasp_gate.intent else
                     '路径已预览 · 请点击“确认抓取”继续任务流程')
             o.controls()
-        except Exception as exc: self.fail(str(exc))
+        except Exception as exc:
+            self.fail(str(exc),retryable=self.phase in ('scan','plan','place') and kind not in ('fatal','vision_unavailable'),
+                      await_input=isinstance(exc,TargetNotVisible))
 
     def motion_done(self, result):
         if not self.active: return False
         o=self.owner
         if self.phase=='prepare':
-            if result.get('status')!='prepared': self.fail(result.get('reason','复位失败')); return True
+            if result.get('status')!='prepared':
+                safe=(result.get('reason_code')=='FEEDBACK_UNAVAILABLE' and result.get('safe_to_retry') is True
+                      and result.get('effect_certainty')=='not_dispatched')
+                if safe:self.cursor.effect='none'
+                self.fail(result.get('reason','复位失败'),await_input=safe);return True
             try:self.adjust_posture(self.start_scan)
             except Exception as exc:self.fail(str(exc))
             return True
         if self.phase=='grasp':
-            if result.get('status')=='completed' and result.get('plan_id')==self.plan_id: self.advance()
-            else: self.fail(result.get('reason','抓取未成功，未继续后续任务'))
+            if result.get('plan_id') not in (None,self.plan_id):
+                self.fail('运动回执与本次规划不一致，执行结果待核对');return True
+            if self.plan_id and result.get('status')=='completed' and result.get('plan_id')==self.plan_id:
+                if self.cursor.step['kind']=='cleanup':self.finish_cleanup(self.candidates[self.candidate_index-1])
+                else:self.advance()
+            else:
+                safe=(result.get('plan_id')==self.plan_id and result.get('safe_to_retry') is True
+                      and result.get('effect_certainty')=='not_dispatched')
+                if safe:self.cursor.effect='none';self.phase='plan'
+                if safe and self.cursor.step['kind']=='cleanup' and result.get('candidate_unavailable') is True:
+                    self.cleanup_failures[self.candidates[self.candidate_index-1]]=result.get('reason','本次目标无法执行')
+                    self.plan_next_candidate()
+                    return True
+                self.fail(result.get('reason','抓取未成功，未继续后续任务'),retryable=safe,
+                          await_input=safe and result.get('reason_code')=='FEEDBACK_UNAVAILABLE')
             return True
         return False
 

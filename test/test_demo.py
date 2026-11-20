@@ -44,7 +44,7 @@ def test_detected_table_obstacles_are_not_ignored():
 
 def test_place_requires_same_completed_run(tmp_path):
     for name,data in [('demo_run.json',dict(grasp_plan_id='one',product_id='drink',settings=DEFAULTS)),
-                      ('demo_grasp_result.json',dict(status='completed',plan_id='one')),
+                      ('held_object.json',dict(status='completed',plan_id='one')),
                       ('demo_base_result.json',dict(status='completed'))]:
         (tmp_path/name).write_text(json.dumps(data))
     plan=dict(place_protocol_version=1,table_height_checked=True,parent_plan_id='one',

@@ -1,9 +1,9 @@
 import sys
 from autolife_shelf_grasp_306.base_execution import helper_command,helper_exit_reason
 
-def test_visual_parent_still_launches_system_chassis(monkeypatch):
+def test_chassis_uses_the_current_deployment_interpreter(monkeypatch):
     monkeypatch.setattr(sys,'executable','/vision/venv/bin/python')
-    assert helper_command()==['/usr/bin/python3','-m','autolife_shelf_grasp_306.chassis','--fixed-sequence']
+    assert helper_command()==['/vision/venv/bin/python','-m','autolife_shelf_grasp_306.chassis','--fixed-sequence']
 
 def test_exit_message_exposes_dependency_failure(tmp_path):
     p=tmp_path/'error.log';p.write_text("Traceback:\nModuleNotFoundError: No module named 'redis'\n")

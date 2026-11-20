@@ -62,7 +62,10 @@ def test_large_correction_requires_ik_and_complete_path(monkeypatch,tmp_path,shi
     ident='a'*64;f=frame('纠偏',q)
     f['visual_binding']=dict(reference=ident,side='right',mode='rigid',taught_object_pose=np.eye(4).tolist(),relative_tcp=np.eye(4).tolist())
     record=compile_action(compose('大偏移',[f],100),q)
-    meta=dict(name='参照',object_pose=np.eye(4).tolist(),model_sha256='same',frame='root')
+    import hashlib
+    model=tmp_path/'model.urdf'
+    model.write_text('<robot name="test"><link name="root"/></robot>')
+    meta=dict(name='参照',object_pose=np.eye(4).tolist(),model_sha256=hashlib.sha256(model.read_bytes()).hexdigest(),frame='root')
     d=np.eye(4);d[:3,:3]=Rotation.from_euler('z',angle,degrees=True).as_matrix();d[0,3]=shift
     calls=[]
     class Guard:
@@ -79,7 +82,7 @@ def test_large_correction_requires_ik_and_complete_path(monkeypatch,tmp_path,shi
             return dict(joints={},checked_states=1)
     monkeypatch.setattr('autolife_shelf_grasp_306.pose_ik_worker.PoseSolver',Solver)
     v=VisualActions.__new__(VisualActions);v.cfg={};v.run=tmp_path;v.solvers={}
-    v.geometry=NS(root='root');v.model_hash=lambda:'same';v.check_mount=lambda *a:None
+    v.geometry=NS(root='root',path=model);v.check_mount=lambda *a:None
     v.robot=NS(refresh_measured=lambda:None,base_sample=lambda:[0,0,0]);v.stable=lambda *a:None
     v.sample=lambda:({'image':np.zeros((60,80,3),np.uint8)},dict(q),np.eye(4))
     v.store=NS(load=lambda _: (meta,{}),directory=tmp_path/'refs')

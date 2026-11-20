@@ -1,7 +1,7 @@
 """VR teaching UI facade; passive capture and exclusive task execution."""
 import fcntl,json,os,time
 from pathlib import Path
-import yaml
+from .runtime_config import load_config
 from PyQt5 import QtCore as C,QtWidgets as Q
 from .teaching_feedback import FeedbackState,create_monitor
 from .teaching_runtime import TeachingRuntime
@@ -12,11 +12,7 @@ class TeachingStudio(Q.QWidget):
     completed=C.pyqtSignal(str,bool,str)
     def __init__(self,owner):
         super().__init__();self.owner=owner;self.panel=self;self.monitor=None;self.lease=None
-        config=owner.root/'config/grasp.yaml'
-        if not config.exists():
-            from ament_index_python.packages import get_package_share_directory
-            config=Path(get_package_share_directory('autolife_shelf_grasp_306'))/'config/grasp.yaml'
-        self.cfg=yaml.safe_load(config.read_text('utf8'));self.parallel_action=None
+        self.cfg=load_config(owner.root);self.parallel_action=None
         self.robot_id=int(self.cfg['robot_id']);self.feedback=FeedbackState()
         self.library=TeachingLibrary(owner.root/'data/fixed_actions')
         from .visual_action_client import VisualClient
@@ -39,14 +35,16 @@ class TeachingStudio(Q.QWidget):
         from ament_index_python.packages import get_package_share_directory
         model = Path(get_package_share_directory('control_center_joint_control'))/'urdf/robot_v3_1.urdf'
         self.editor.ensure_model(str(model))
-    def records(self):return self.library.records()
+    def records(self,names=None):return self.library.records(names)
     def moving(self):return self.parallel_action is not None or self.visual.busy or self.runtime.busy or self.engine.moving()
     def _acquire(self):
         if self.visual.busy:raise ValueError('物体参照操作正在进行，请完成或停止后再切换控制')
         if self.runtime.busy:raise ValueError('请先停止并关闭遥操，再执行动作串或抓取任务')
         if self.editor.remote_locked():raise ValueError('请先完成手柄示教和录制，再执行任务')
         if self.lease:return
-        path=Path(f'/run/user/{os.getuid()}/vr345-arm-control.lock')
+        # Both participants must use the same controller lock on this host.
+        lock_name=self.cfg.get('vr_arm_lock_name',f'vr{self.robot_id}-arm-control.lock')
+        path=Path(f'/run/user/{os.getuid()}')/lock_name
         handle=path.open('a+')
         try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:

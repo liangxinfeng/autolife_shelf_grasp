@@ -5,9 +5,11 @@ import numpy as np
 
 def consensus_indices(centers, dimensions=None):
     points=np.asarray(centers,float)
-    if points.ndim!=2 or points.shape[1]!=3 or len(points)<5:
+    if points.ndim!=2 or points.shape[1]!=3 or not len(points):
         raise ValueError('有效深度帧不足，请重试')
     if not np.isfinite(points).all():raise ValueError('物体中心含无效深度')
+    if len(points)==2 and np.linalg.norm(points[1]-points[0])>.010:
+        raise ValueError('两次观测的抓点互相矛盾，请重新取景')
     keep=np.linalg.norm(points-np.median(points,axis=0),axis=1)<=.010
     if dimensions is not None:
         sizes=np.asarray(dimensions,float)
@@ -17,10 +19,13 @@ def consensus_indices(centers, dimensions=None):
         # Compare each observation to the consensus, not two noisy extremes.
         # Width/depth have already been projected into the SAME physical axes.
         # Extra 1mm covers quantization rather than interpreting it as shape.
-        keep&=np.all(np.abs(sizes-median)<=np.maximum(.008,median*.15)+.001,axis=1)
-    minimum=max(5,math.ceil(len(points)*.70))
+        tolerance=np.maximum(.008,median*.15)+.001
+        if len(sizes)==2 and np.any(np.abs(sizes[1]-sizes[0])>tolerance):
+            raise ValueError('两次观测的尺寸互相矛盾，请重新取景')
+        keep&=np.all(np.abs(sizes-median)<=tolerance,axis=1)
+    minimum=math.ceil(len(points)*.70)
     if keep.sum()<minimum:
-        raise ValueError('多帧物体尺寸不稳定或中心波动超过10mm，尚无至少5帧一致多数，请重试')
+        raise ValueError('当前观测的尺寸或中心互相矛盾，请重新取景')
     center=np.median(points[keep],axis=0)
     keep&=np.linalg.norm(points-center,axis=1)<=.010
     if keep.sum()<minimum:raise ValueError('多帧物体中心仍在变化，请保持物体和机器人不动后重试')

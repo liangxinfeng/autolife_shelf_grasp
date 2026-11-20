@@ -67,7 +67,7 @@ def test_loop_interval_count_stale_duplicate_and_snapshot(window):
 
 
 @pytest.mark.parametrize('at_interval',[False,True])
-@pytest.mark.parametrize('method',['global','page','display_close','worker_exit'])
+@pytest.mark.parametrize('method',['global','page','display_close'])
 def test_stop_cancels_current_and_future_runs(window,at_interval,method):
     w=window;p=w.automatic;start(w,'loop')
     if at_interval:w.workflow.advance()
@@ -82,19 +82,19 @@ def test_stop_cancels_current_and_future_runs(window,at_interval,method):
     assert w.workflow.cursor.run_id==old and not p.active
 
 
-def test_failure_no_repeat_or_success(window):
+def test_failure_preserves_task_without_false_success_or_repeat(window):
     w=window;p=w.automatic;start(w,'loop')
     w.workflow.fail('深度数据不足');p.deadline=0;p.tick()
-    assert not p.active and p.phase=='stopped' and p.completed==0
+    assert p.active and p.phase=='running' and p.completed==0 and w.workflow.waiting
     assert '深度数据不足' in p.state.text()
     assert not p.display.again.isEnabled()
 
 
-def test_drain_previous_operations_bounded(window):
+def test_drain_previous_operations_preserves_schedule(window):
     w=window;p=w.automatic;start(w,'loop');w.workflow.advance();p.deadline=0
     w.busy=True;p.tick();assert p.active and p.phase=='waiting'
     p.settle_since=time.monotonic()-31;p.tick()
-    assert not p.active and p.phase=='stopped'
+    assert p.active and p.phase=='waiting' and '等待' in p.state.text()
 
 
 def test_second_click_no_parallel_run_and_settings_saved(window):
@@ -107,10 +107,12 @@ def test_second_click_no_parallel_run_and_settings_saved(window):
         w.workflow.start(dict(steps=[dict(kind='grasp',target='other')]))
 
 
-def test_no_worker_or_busy_cannot_start(window):
-    w=window;p=w.automatic;w.ready=False;p.start('loop',confirmed=True)
-    assert not p.active and not w.workflow.active
-    assert '未启动' in p.state.text()
+def test_unready_visual_step_is_retained_for_recovery(window):
+    from autolife_shelf_grasp_306.task_flow_ui import Workflow
+    w=window;p=w.automatic;w.ready=False;w.workflow.next=lambda:Workflow.next(w.workflow)
+    p.start('loop',confirmed=True)
+    assert p.active and w.workflow.waiting and w.workflow.cursor.index==0
+    assert '需要视觉能力' in p.state.text()
 
 
 def test_cancel_consent_and_fullscreen_restore(window,qt):
@@ -161,13 +163,13 @@ def test_margin50_clamped_and_validated(tmp_path):
     assert cmd['requested_width_mm']==0 and cmd['target_deg']==330
 
 
-def test_changed_map_stops_next_round(window):
+def test_changed_map_waits_without_dispatching_next_round(window):
     w=window;p=w.automatic
     p.library['自动递送']={'steps':[dict(kind='navigate',target='前台')]}
     w.navigation.data=dict(snapshot_time=time.time(),ready=True,pose=[0,0,0],active_map='map1',names=['前台'])
     start(w,'loop');w.workflow.advance()
     w.navigation.data['active_map']='map2';p.deadline=0;p.tick()
-    assert not p.active and p.phase=='stopped' and '地图已变化' in p.state.text()
+    assert p.active and p.phase=='waiting' and '地图已变化' in p.state.text()
 
 
 def test_closing_main_window_stops_interval(window):

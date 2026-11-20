@@ -28,7 +28,7 @@ def test_position_residual_does_not_delay_or_abort(tmp_path,arm,closing,residual
     assert now[0]<=1.5*abs(goal-start)/120+.08
     assert sent[-1][arm+'_gripper_target_joints_position']==[goal]
     assert all(v[('left' if arm=='right' else 'right')+'_gripper_target_joints_position']==[77.] for v in sent)
-    assert bool(held)!=closing
+    assert not held  # Generic opening retains its final target despite lag.
     assert reports[-1]['arrival_required'] is False and not reports[-1]['physical_grip_verified']
 
 

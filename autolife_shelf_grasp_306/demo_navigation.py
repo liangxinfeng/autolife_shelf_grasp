@@ -2,7 +2,8 @@
 import json,uuid
 from PyQt5 import QtWidgets as Q
 from .core import atomic_json
-from .demo_config import load,require_drink
+from .demo_config import load
+from .held_receipt import has_held
 from .navigation_logic import select_product
 
 
@@ -13,21 +14,26 @@ class DemoNavigation:
             route=self.navigation.selection();settings=load(self.root)
         except Exception as exc:self.status.setText(str(exc));return
         if Q.QMessageBox.question(self,'确认演示抓取',
-            f'复位并张开夹爪 → {route["shelf"]} → 抓取{route["product_name"]} → {route["front"]} → 放置到桌面。\n'
-            '请先取出夹爪中的物品，机器人应已在前台附近。到货架后重新识别规划；导航失败不会继续抓放。\n'
+            f'前往{route["shelf"]} → 抓取{route["product_name"]} → {route["front"]} → 放置到桌面。\n'
+            '请确认机器人在前台附近，抓取用的夹爪可用。到货架后重新识别规划。\n'
             '底盘使用控制中心避障；机械臂抓取仍需您确认货架及周围空间安全，全程准备实体急停。',
             defaultButton=Q.QMessageBox.No)!=Q.QMessageBox.Yes:return
         self.demo_context={**route,'settings':settings,'run_id':uuid.uuid4().hex}
         atomic_json(self.run/'demo_run.json',self.demo_context)
         for name in ('stop','demo_base_result.json','demo_grasp_result.json','demo_shelf_result.json','observation_attempt.json','demo_observe_result.json'):(self.run/name).unlink(missing_ok=True)
-        self.demo_active=True;self.demo_phase='prepare';self.send('prepare')
+        self.demo_active=True
+        if has_held(self.run):self.navigate_demo('to_shelf')
+        else:self.demo_phase='prepare';self.send('prepare')
 
     def navigate_demo(self,leg):
         if not self.demo_active or (self.run/'stop').exists():return
         self.demo_phase=leg;self.live();self.busy=True;self.controls()
         context=self.demo_context
-        self.navigation.command('navigate',name=context['shelf' if leg=='to_shelf' else 'front'],
-                                map=context['map'],run_id=context['run_id'],leg=leg)
+        try:
+            self.navigation.command('navigate',name=context['shelf' if leg=='to_shelf' else 'front'],
+                                    map=context['map'],run_id=context['run_id'],leg=leg)
+        except ValueError as exc:
+            self.demo_failure(str(exc));return
         self.status.setText('正在导航到货架…' if leg=='to_shelf' else '持物导航回前台…')
 
     def navigation_done(self,data):
@@ -56,9 +62,6 @@ class DemoNavigation:
         try:
             if data['blockers']:raise ValueError('；'.join(data['blockers']))
             if data['target']['product_id']!=self.demo_context['product_id']:raise ValueError('商品与演示选择不一致')
-            full=json.loads((self.run/data['filename']).read_text());require_drink(full['product'])
-            from .demo_config import require_placement_bottom
-            require_placement_bottom(full)
             self.demo_context['grasp_plan_id']=data['plan_id'];atomic_json(self.run/'demo_run.json',self.demo_context)
             self.demo_phase='grasp';self.launch_motion(data['filename'])
         except Exception as exc:self.demo_failure(str(exc))

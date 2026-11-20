@@ -4,6 +4,11 @@ import pinocchio as pin
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
+from .planning_control import VENDOR_IK_POSITION_TOLERANCE_M
+
+
+POSITION_WEIGHT = 10.
+
 
 class BoundedPoseResidual:
     """Six-dimensional TCP residual and analytic Jacobian in the fixed task frame."""
@@ -41,7 +46,7 @@ class BoundedPoseResidual:
 
     def fun(self, x):
         self._evaluate(x)
-        return np.r_[10. * (self.actual_point - self.point),
+        return np.r_[POSITION_WEIGHT * (self.actual_point - self.point),
                      Rotation.from_matrix(self.error_rotation).as_rotvec()]
 
     def jac(self, x):
@@ -52,26 +57,34 @@ class BoundedPoseResidual:
         linear = self.world_to_task @ (j[:3] - pin.skew(lever) @ j[3:])
         angular = (pin.Jlog3(self.error_rotation) @ self.actual_rotation.T
                    @ self.world_to_task @ j[3:])
-        return np.vstack((10. * linear, angular))
+        return np.vstack((POSITION_WEIGHT * linear, angular))
 
 
 def recover_seed(planner, source, tcp, point, rotation, seed, lower, upper):
     """Find a bounded seed; the caller must re-solve and verify it with vendor KDL."""
     from .planning import IKFailure
     residual = BoundedPoseResidual(planner, source, tcp, point, rotation)
+    def errors(x):
+        if not np.isfinite(x).all() or np.any(x < lower) or np.any(x > upper):
+            raise IKFailure('有界初值含无效或超限的关节')
+        error = residual.fun(x)
+        if not np.isfinite(error).all():
+            raise IKFailure('有界初值的位姿残差无效')
+        return np.linalg.norm(error[:3]) / POSITION_WEIGHT, np.linalg.norm(error[3:])
+
     initial = np.clip(np.asarray(seed, float), lower, upper)
     weight = .002
     fun = lambda x: np.r_[residual.fun(x), weight * (x - initial)]
     jac = lambda x: np.vstack((residual.jac(x), weight * np.eye(len(x))))
     biased = least_squares(fun, initial, jac=jac, bounds=(lower, upper),
         max_nfev=80, ftol=1e-8, xtol=1e-8, gtol=1e-8)
-    initial_error=residual.fun(biased.x)
-    if np.linalg.norm(initial_error[:3])<=1e-5 and np.linalg.norm(initial_error[3:])<=1e-5:
+    position, angle = errors(biased.x)
+    if position <= 1e-6 and angle <= 1e-5:
         return biased.x
     result = least_squares(residual.fun, biased.x, jac=residual.jac,
         bounds=(lower, upper), max_nfev=50, ftol=1e-10, xtol=1e-10, gtol=1e-10)
-    error = residual.fun(result.x)
-    if (not np.isfinite(result.x).all() or np.any(result.x < lower) or np.any(result.x > upper)
-            or np.linalg.norm(error[:3]) > .00001 or np.linalg.norm(error[3:]) > 1e-5):
+    position, angle = errors(result.x)
+    # Only a seed for a second KDL solve. Match the caller's final TCP FK envelope.
+    if position > VENDOR_IK_POSITION_TOLERANCE_M or angle > np.deg2rad(2.):
         raise IKFailure('有界初值搜索未找到满足位置、姿态和原限位的解')
     return result.x

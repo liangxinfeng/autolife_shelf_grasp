@@ -8,6 +8,8 @@ from scipy.spatial import ConvexHull
 from .bottle import horizontal_basis
 from .object_extent import bbox
 
+MAX_CONTACT_OFFSET_M=.060
+
 
 def merged_footprint(products,centers,center,up):
     points=np.concatenate([np.asarray(p['footprint_vertices_torso'])+c-center for p,c in zip(products,centers)])
@@ -53,21 +55,31 @@ def required_opening(product,contact,rotation,preopening_margin=.010):
 
 def candidates(product,cfg):
     if 'measured_footprint_torso' not in product:return []
-    vertices=np.asarray(product['measured_footprint_torso']);result=[]
+    vertices=np.asarray(product['measured_footprint_torso']);result=[];near_limit=[]
     for yaw in [v for a in range(0,91,5) for v in ([0.] if a==0 else [-float(a),float(a)])]:
         forward,side,up=horizontal_basis(cfg['up_torso'],np.deg2rad(cfg['approach_yaw_deg']+yaw))
         rotation=np.column_stack([forward,side,up]);near=float(np.min(vertices@forward))
+        close_fit=None
         # Closest-to-centre valid contact first; require >=10mm engagement.
-        for x in np.arange(-.005,max(near+.010,-.060)-1e-8,-.005):
+        for x in np.arange(-.005,max(near+.010,-MAX_CONTACT_OFFSET_M)-1e-8,-.005):
             contact=forward*x
             p=swept_points(product,contact,forward);lateral=p@side
             contact+=side*(lateral.min()+lateral.max())/2
-            width=required_opening(product,contact,rotation)
+            width=required_opening(product,contact,rotation,preopening_margin=0.)
             if width<=cfg['gripper_max_width_m']:
-                result.append(dict(yaw=yaw,contact=contact,required_opening_m=width))
-                break
+                candidate=dict(yaw=yaw,contact=contact,required_opening_m=width)
+                if width+.010<=cfg['gripper_max_width_m']:
+                    result.append(candidate)
+                    close_fit=None
+                    break
+                # At the aperture limit, accept a verified whole-width span.
+                # A diagonal sliver at the corner of an oversized box is not
+                # an opposed contact pair.
+                if close_fit is None and np.ptp(vertices@side)+.004<=cfg['gripper_max_width_m']:
+                    close_fit=candidate
+        if close_fit is not None:near_limit.append(close_fit)
         if len(result)>=5:break
-    return result
+    return (result+near_limit)[:5]
 
 
 def held_tcp(grasp,physical_tcp):

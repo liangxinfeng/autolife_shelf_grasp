@@ -6,11 +6,15 @@ from autolife_shelf_grasp_306.base_sequence import normalize,Controller,clearanc
 from autolife_shelf_grasp_306.task_flow import validate,Cursor
 
 @pytest.mark.parametrize('width,margin',[(.07,5),(.05,0),(.085,10),(.008,20),(.07,30),(.008,30),(.07,50),(.008,50)])
-def test_closure_mapping_and_plan_binding(width,margin):
-    cfg=dict(gripper_max_width_m=.095,gripper_open_deg=10.,gripper_closed_deg=330.)
+def test_closure_mapping_and_plan_binding(tmp_path,width,margin):
+    curve=tmp_path/'gripper.json'
+    curve.write_text(json.dumps(dict(hardware='dm_type1',measured=True,
+        arms={'left':[[5,330],[45,180],[90,10]]})))
+    cfg=dict(arm='left',gripper_width_calibration=str(curve),
+        gripper_max_width_m=.09,gripper_open_deg=10.,gripper_closed_deg=330.)
     command=closing_command(width,margin,cfg)
     assert 10<=command['target_deg']<=330
-    assert command['requested_width_mm']==max(0,width*1000-margin)
+    assert command['requested_width_mm']==max(5,width*1000-margin)
     p=dict(grasp_width_m=width,grip_command=command,config=cfg)
     assert command_from_plan(p)==command['target_deg']
     p['grip_command']['target_deg']+=1
@@ -65,6 +69,6 @@ def test_obstacle_guard_direction_and_turn_sweep():
 
 def test_lidar_known_mounting():
     r=np.full(361,np.inf);r[180]=1
-    assert np.allclose(scan_points(r,0,math.pi/180,.01,20,True),[[1.215,0]])
+    assert np.allclose(scan_points(r,0,math.pi/180,.01,20,True),[[-.7366,0]])
     assert np.allclose(scan_points(r,0,math.pi/180,.01,20,False),[[-1.215,0]])
     with pytest.raises(ValueError):scan_points(np.zeros(360),0,.01,.01,20,True)

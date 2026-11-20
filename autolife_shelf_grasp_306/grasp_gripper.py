@@ -65,6 +65,7 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
         raise ValueError('路径所需夹爪净开口无效，请重新规划')
     effective_clear_width=minimum
     last_send=-float('inf');last_report=-float('inf');command=start[jaw]
+    last_opening=None;last_progress=begin
     # 本执行器独占夹爪指令。其他手的夹爪保持本段开始时的实际开度。
     node._active_goals.pop('grippers',None);node.progress_watch.pop('grippers',None)
     while True:
@@ -74,9 +75,9 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
             t=min(1.,max(0.,(now-begin)/duration))
             command=start[jaw]+(goal-start[jaw])*(t*t*(3.-2.*t))
             values={n:(command if n==jaw else start[n]) for n in targets}
-            node._publish_vendor(node._gripper_pub,{
-                'left_gripper_target_joints_position':[values['Joint_Left_Gripper']],
-                'right_gripper_target_joints_position':[values['Joint_Right_Gripper']]})
+            payload={f'{side}_gripper_target_joints_position':[values[gripper_name(side)]]
+                     for side in ('left','right') if side==arm or not getattr(node,'preserve_loaded_grippers',False)}
+            node._publish_vendor(node._gripper_pub,payload)
             node._last_operator_activity=time.monotonic();last_send=now
         result=evidence.update(now,q[jaw],command) if closing else None
         issued=abs(command-goal)<1e-6 and now-begin>=duration
@@ -89,13 +90,22 @@ def execute(node,cfg,arm,state,checked,clock,hold,report,object_width_m):
                 arrival_required=False,position_error=float(q[jaw]-goal),physical_grip_verified=False))
             last_report=now
         if issued:
-            # 精确位置量与夹住/松开并不等价；不再等待目标残差归零。
-            # 抓放路径有实际净开口要求时，只核对必要间隙，不要求全开90mm。
             actual_width=float(np.interp(q[jaw],positions[::-1],widths[::-1]))
             if not closing and minimum is not None and not opening_clears_path(actual_width,minimum):
-                hold(node,['grippers'])
-                raise ValueError(f'当前夹爪净开口{actual_width:.1f}mm小于路径所需{minimum:.1f}mm')
-            if not closing:hold(node,['grippers'])
+                passage_mm=object_width_m*1000 if object_width_m>0 else minimum
+                if not opening_clears_path(actual_width,passage_mm):
+                    # The jaws physically intersect the object's modeled transit
+                    # corridor. Allow delayed feedback to catch up at the final
+                    # command before classifying a sustained obstruction.
+                    if last_opening is None or actual_width>last_opening+.5:
+                        last_opening=actual_width;last_progress=now
+                    if now-last_progress<.8:continue
+                    hold(node,['grippers'])
+                    raise ValueError('张爪指令已发完，但夹爪净开口仍小于物体宽度且无进展，请检查夹爪是否受阻')
+                # Keep the requested target active. Feedback lag is neither
+                # a failed command nor confirmation of physical clearance.
+                return 'opening_command_complete_unverified'
+            if not closing and minimum is not None:hold(node,['grippers'])
             if release_width is not None:return 'released'
             if opening_width is not None:return 'opening_clear'
             # 闭合后的原目标必须继续保持，不能用受物体阻挡的实际开口改写。

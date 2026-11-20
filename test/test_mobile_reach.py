@@ -94,8 +94,10 @@ def test_preview_offer_never_starts_base_or_enables(monkeypatch):
     app=Q.QApplication.instance() or Q.QApplication([])
     owner=Q.QWidget();owner.controls=lambda:None;owner.automatic_grasp_enabled=lambda:False
     owner.demo_active=owner.placement_active=False;owner.status=NS(setText=lambda s:None)
+    owner.workflow=NS(active=False);owner.navigation=NS(map=NS(operation_target=None,update=lambda:None))
     reach=MobileReach(owner);calls=[];reach.start=lambda:calls.append('move')
-    reach.offer(dict(proposal={'forward_m':.1}));app.processEvents()
+    reach.offer(dict(proposal={'chain_name':'货架工作区','goal_pose':[.1,0,0],
+                              'workspace_margin_m':.1,'path_checked':True}));app.processEvents()
     assert not calls and reach.pending and not reach.active
 
 
@@ -111,12 +113,14 @@ def test_real_window_compensation_then_fresh_plan_single_execution(window,qt,mon
     import time
     from autolife_shelf_grasp_306 import parallel_prepare_ui
     w=window;scene(w);w.send('plan',id=1);controller=w.mobile_reach
-    record=m.proposal('grasp',.1,{},[0,0,0],[.7,0,.6],'right',120,1)
+    record=dict(route_type='parking_chain',kind='grasp',token='d'*32,created=time.monotonic(),
+        map='map',chain_name='货架工作区',chain_sha256='e'*64,goal_pose=[.1,0,0],source_map_pose=[0,0,0],
+        workspace_margin_m=.1,path_checked=True,checked_states=120,arm='right')
     record['resume']=dict(action='plan',id=1)
     record['request_id']=w.request
     w.receive_event(dict(event='base_reposition',request_id=w.request,proposal=record))
     qt.processEvents()
-    assert not controller.active and w.execute.isEnabled() and '补偿' in w.execute.text()
+    assert not controller.active and w.execute.isEnabled() and '操作点' in w.execute.text()
     calls=[]
     def prepare(owner,kind):
         calls.append(('prepare',kind));owner.parallel_prepare=NS(token='P'*32)
@@ -127,8 +131,7 @@ def test_real_window_compensation_then_fresh_plan_single_execution(window,qt,mon
     state=w.run/'parallel_prepare_state.json'
     state.write_text(json.dumps(dict(token='P'*32,status='base_released',stamp=time.monotonic())))
     controller.tick();assert calls[-1]==('base',.1)
-    controller.proc=NS(readAllStandardOutput=lambda:b'',readAllStandardError=lambda:b'',deleteLater=lambda:None)
-    controller.result=dict(token=record['token'],status='completed');controller.finished()
+    controller.navigation_event(dict(event='nav_done',run_id=record['token'],leg='operation_dock',success=True))
     state.write_text(json.dumps(dict(token='P'*32,status='ready',stamp=time.monotonic())))
     controller.tick();assert controller.stage=='replan'
     command=w.process.commands[-1]
@@ -143,9 +146,9 @@ def test_real_window_compensation_then_fresh_plan_single_execution(window,qt,mon
 
 def test_stop_during_base_releases_ui_after_receipt(window):
     w=window;c=w.mobile_reach;c.stage='moving';w.busy=True
-    c.proc=NS(readAllStandardOutput=lambda:b'',readAllStandardError=lambda:b'',deleteLater=lambda:None)
     w.stop_motion();assert (w.run/'stop').exists()
-    c.finished();assert not w.busy and not w.cancel_pending and not c.active
+    c.navigation_event(dict(event='nav_done',leg='operation_dock',success=True))
+    assert not w.busy and not w.cancel_pending and not c.active
 
 
 def test_visual_failure_during_manual_compensation_stops_base(window):

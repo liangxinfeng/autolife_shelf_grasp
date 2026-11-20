@@ -1,4 +1,5 @@
 """ROS navigation client in its own process. Never publishes chassis velocity."""
+from .runtime_identity import identity
 import argparse,json,math,queue,sys,threading,time
 from collections import deque
 from pathlib import Path
@@ -73,6 +74,8 @@ def main():
     waiting_navigation=None
     from .task_flow import NavigationSettling
     localization_gate=LocalizationGate();pose_reason='等待定位坐标'
+    scan_future=None
+    last_scan_request=-math.inf
     redis_client=redis.Redis(socket_timeout=.15,socket_connect_timeout=.15)
     def readiness(m):
         nonlocal nav2_readiness,nav2_readiness_time
@@ -203,9 +206,9 @@ def main():
     node.create_subscription(PoseWithCovarianceStamped,'/amcl_pose',amcl_pose,qos)
     node.create_subscription(OccupancyGrid,'/map',map_received,QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL))
     node.create_subscription(Costmap,'/global_costmap/costmap_raw',obstacle_received,QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL))
-    node.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',odometry,qos_profile_sensor_data)
-    node.create_subscription(Bool,'/robot_navigation_0_345/is_navigating',vendor,10)
-    node.create_subscription(String,'/topic_arm_whole_body_and_gripper_current_joints_status_0_345',joints,qos_profile_sensor_data)
+    node.create_subscription(Odometry,f'/topic_gv_wheel_odom_{identity().topic_suffix}',odometry,qos_profile_sensor_data)
+    node.create_subscription(Bool,f'/robot_navigation_{identity().topic_suffix}/is_navigating',vendor,10)
+    node.create_subscription(String,f'/topic_arm_whole_body_and_gripper_current_joints_status_{identity().topic_suffix}',joints,qos_profile_sensor_data)
     for topic in ('/navigate_to_pose/_action/status','/navigate_through_poses/_action/status','/dock_robot/_action/status'):
         node.create_subscription(GoalStatusArray,topic,lambda m,k=topic:actions.update({k:any(s.status in (1,2,3) for s in m.status_list)}),qos)
     def call(kind,request):
@@ -317,7 +320,7 @@ def main():
                     if map_fault:raise ValueError('地图切换尚未完整确认，请重新加载地图后再开始')
                     if goal or pending or map_op or busy():raise ValueError('其他导航或地图操作仍在进行，未接管')
                     if not still() or pose() is None:raise ValueError('底盘尚未停稳或定位未就绪')
-                    if redis_client.get('shared_params:0:300:is_navigating') in (b'true',b'True'):
+                    if redis_client.get(identity().shared_key('is_navigating')) in (b'true',b'True'):
                         raise ValueError('底盘正被其他控制端使用')
                     if cmd['map']!=active_map() or cmd['name'] not in names:raise ValueError('地图或航点已改变，请重新选择')
                     step_posture=None
@@ -446,7 +449,6 @@ def main():
                         stamp=m.header.stamp.sec+m.header.stamp.nanosec/1e9
                         localization_gate.request(stamp)
                         localization_gate.initial(stamp,values);initial_publisher.publish(m)
-                        if clients['nomotion'].service_is_ready():clients['nomotion'].call_async(Empty.Request())
                         emit('nav_message',text='手动定位已提交，等待AMCL与坐标变换确认；不会移动机器人')
                     elif kind=='relocalize':
                         if not response.success:raise ValueError(response.message)
@@ -515,6 +517,10 @@ def main():
                 try:current_map=active_map()
                 except Exception:current_map=''
                 current_pose=pose()
+                if (localization_gate.needs_stationary_scan() and still() and now-last_scan_request>=1.
+                        and (scan_future is None or scan_future.done()) and clients['nomotion'].service_is_ready()):
+                    scan_future=clients['nomotion'].call_async(Empty.Request())
+                    last_scan_request=now
                 snapshot=dict(maps=map_catalog(),active_map=current_map,names=names,
                      library=waypoint_poses(None),waypoints=waypoint_poses(names),parking_chains=parking_chains(current_map) if current_map else {},pose=current_pose,meta=map_meta,
                      ready=navigation_ready() and not map_fault and not guard_reason(),guard_reason=guard_reason() if clients['navigate'].service_is_ready() else '',

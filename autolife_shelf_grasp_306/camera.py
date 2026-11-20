@@ -24,8 +24,12 @@ class Camera:
         consumers=[]
         try:
             from autolife_handeye_calibration_306.camera import Camera as NativeCamera
-            for kind in ('color','depth'):
-                consumers.append(NativeCamera.open_native_camera(self.cfg, kind))
+            if self.cfg.get('camera_protocol') == 'ALSHM001':
+                from autolife_v3_camera import open_rgbd_pair
+                consumers = open_rgbd_pair()
+            else:
+                for kind in ('color','depth'):
+                    consumers.append(NativeCamera.open_native_camera(self.cfg, kind))
             last=None;intr=None;last_intr=0.;last_preview=0.;cached_depth=None
             while not self.stop.is_set():
                 try:

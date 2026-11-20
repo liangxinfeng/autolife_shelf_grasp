@@ -71,6 +71,54 @@ def test_unreachable_target_is_not_clipped_or_accepted(tmp_path):
             np.zeros(n), np.full(n,-.05), np.full(n,.05))
 
 
+@pytest.mark.parametrize('distance,angle,vendor_reply,requests,accepted', [
+    (.002, 1.5, 'seed', 2, True),
+    (.002, 1.5, 'no_ik', 2, False),
+    (.002, 1.5, 'bad_fk', 2, False),
+    (.004, 1.5, 'seed', 1, False),
+    (.002, 2.5, 'seed', 1, False),
+])
+def test_near_boundary_seed_must_pass_vendor_and_final_fk(
+        tmp_path, distance, angle, vendor_reply, requests, accepted):
+    from autolife_shelf_grasp_306.vendor_grasp_planning import VendorGraspPlanner
+    from autolife_shelf_grasp_306.vendor_ik_process import NoIKSolution
+
+    planner = VendorGraspPlanner.__new__(VendorGraspPlanner)
+    vars(planner).update(vars(fixture(tmp_path)))
+    planner.cfg = {'arm': 'right'}
+    planner.context.set_stage = lambda *args, **kwargs: None
+    n = len(planner.names)
+    planner.bounds = (np.full(n, -1e-6), np.full(n, 1e-6))
+    source = dict.fromkeys(planner.names, 0.)
+    tcp = np.array([.12, .02, -.03])
+    start, orientation = planner.pose(source, tcp)
+    target = start + [distance, 0., 0.]
+    rotation = orientation @ Rotation.from_euler('z', angle, degrees=True).as_matrix()
+    calls = []
+
+    def request(kind, **inputs):
+        calls.append(inputs)
+        if len(calls) == 1 or vendor_reply == 'no_ik':
+            raise NoIKSolution('no vendor solution')
+        if vendor_reply == 'bad_fk':
+            planner.pose = lambda q, tcp: (target + [.006, 0., 0.], rotation)
+        return inputs['seed']
+
+    planner.solver = SimpleNamespace(request=request)
+    if accepted:
+        result = planner.solve(source, tcp, target, rotation)
+        pose, final_rotation = planner.pose(result, tcp)
+        assert .001 < np.linalg.norm(pose - target) < .003
+        assert 1. < Rotation.from_matrix(rotation.T @ final_rotation).magnitude()*180/np.pi < 2.
+    else:
+        with pytest.raises(IKFailure):
+            planner.solve(source, tcp, target, rotation)
+    assert len(calls) == requests
+    if requests == 2:
+        assert calls[0]['pose'] == calls[1]['pose']
+        assert calls[0]['lower'] == calls[1]['lower'] and calls[0]['upper'] == calls[1]['upper']
+
+
 def test_cancel_interrupts_optimization(tmp_path):
     p = fixture(tmp_path); n = len(p.names)
     def cancel(): raise PlanningCancelled('cancelled')

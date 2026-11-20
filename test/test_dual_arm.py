@@ -54,7 +54,8 @@ def test_right_held_gripper_guard():
     record={'arm':'right','q':{'Joint_Right_Gripper':120.}}
     check_held_gripper({'Joint_Right_Gripper':125.},record)
     with pytest.raises(ValueError):check_held_gripper({'Joint_Left_Gripper':120.},record)
-    with pytest.raises(ValueError):check_held_gripper({'Joint_Right_Gripper':130.},record)
+    check_held_gripper({'Joint_Right_Gripper':130.},record)
+    with pytest.raises(ValueError):check_held_gripper({'Joint_Right_Gripper':float('nan')},record)
 
 
 def test_right_standalone_place_end_to_end_provenance(tmp_path):

@@ -7,6 +7,7 @@ Recovery never resumes a canceled goal: the arbiter requires an explicit rearm.
 import argparse
 from pathlib import Path
 import time
+from .task_runtime import SESSION_PREFIX
 
 
 class SourceLease:
@@ -44,7 +45,8 @@ def main():
     # A dedicated topic prevents us from impersonating or conflicting with
     # a control-center/VR owner of a different navigation stack.
     expected='/grasp306/operator_heartbeat/'+run.name
-    if args.topic!=expected or not run.name.startswith('shelf306_'):raise ValueError('导航心跳会话不匹配')
+    if args.topic!=expected or not run.name.startswith((SESSION_PREFIX,'shelf306_')):
+        raise ValueError('导航心跳会话不匹配')
     import rclpy
     from std_msgs.msg import String
     rclpy.init();node=rclpy.create_node('grasp_navigation_owner_watchdog')

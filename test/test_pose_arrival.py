@@ -149,10 +149,9 @@ def test_receipt_holds_only_affected_arm_and_next_frame_starts_measured(tmp_path
 
 
 def test_real_urdf_envelope_if_available():
-    path=Path('/home/ubuntu/ros2_ws/src/autolife_shelf_grasp_306/config/grasp.yaml')
-    if not path.exists():pytest.skip('robot URDF only')
-    import yaml
-    env=PoseEnvelope(yaml.safe_load(path.read_text())['urdf_path'])
+    from autolife_shelf_grasp_306.runtime_config import load_config
+    cfg=load_config(Path(__file__).parents[1])
+    env=PoseEnvelope(cfg['urdf_path'])
     b,goal=fixture()
     zero=env.check(goal,goal)
     assert zero['displacement_m']<1e-8 and zero['tool_rotation_deg']<1e-5

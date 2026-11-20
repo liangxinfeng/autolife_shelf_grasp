@@ -53,6 +53,13 @@ def test_oriented_dimensions_follow_rotated_box():
     np.testing.assert_allclose(axes.T@axes,np.eye(3),atol=1e-7)
 
 
+def test_sparse_sheet_keeps_body_but_never_joins_separate_objects():
+    x,y=np.meshgrid(np.arange(16)*.0055,np.arange(18)*.0055)
+    sheet=np.c_[x.ravel(),y.ravel(),.002*np.sin(x.ravel()*40)]
+    assert coherent_component(sheet).sum()>=.95*len(sheet)
+    with pytest.raises(DepthQualityError):coherent_component(np.r_[sheet,sheet+[0,0,.025]])
+
+
 @pytest.mark.parametrize('key,value',[('bbox_extents_m',[float('nan'),.1,.1]),('bbox_axes_torso',np.zeros((3,3)).tolist())])
 def test_invalid_extent_rejected(key,value):
     with pytest.raises(ValueError):bbox({**product(),key:value})

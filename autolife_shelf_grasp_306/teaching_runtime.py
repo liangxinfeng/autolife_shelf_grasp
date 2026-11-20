@@ -1,5 +1,5 @@
 """Nonblocking status polling and ownership of a windowless VR navigation stack."""
-import json,ssl,subprocess,sys,time,urllib.request
+import json,os,ssl,subprocess,sys,time,urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from PyQt5 import QtCore as C
@@ -22,7 +22,8 @@ class TeachingRuntime(C.QObject):
     changed=C.pyqtSignal()
     def __init__(self,robot_id,log_dir,parent=None,entry=None,url='https://127.0.0.1:8445'):
         super().__init__(parent);self.robot_id=int(robot_id);self.url=url
-        self.entry=Path(entry or f'/home/ubuntu/ros2_ws/bin/vr_navigation{robot_id}_stack')
+        self.entry=Path(entry or os.environ.get('VR_NAVIGATION_ENTRY') or
+                        Path.home()/'ros2_ws/bin'/f'vr_navigation{robot_id}_stack')
         self.log_dir=Path(log_dir);self.process=None;self.log=None;self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='teaching-vr-status')
         self.future=None;self.last_poll=0.;self.data=None;self.phase='stopped';self.message='遥操未开启';self.started=0.;self.closed=False;self.start_pending=False
         self.timer=C.QTimer(self);self.timer.timeout.connect(self.tick);self.timer.start(100)

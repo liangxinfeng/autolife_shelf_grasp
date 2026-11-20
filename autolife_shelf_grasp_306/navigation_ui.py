@@ -1,4 +1,5 @@
 """Compact live map and shared waypoint selectors; no navigation reimplementation."""
+import sys
 import json,math,time
 from PyQt5 import QtCore as C,QtGui as G,QtWidgets as Q
 from .navigation_map import world_to_pixel,manual_pose
@@ -154,6 +155,7 @@ class NavigationDialog(Q.QDialog):
 class NavigationPanel(Q.QWidget):
     def __init__(self,owner,start=True):
         super().__init__();self.owner=owner;self.data={};self.buffer=b'';self.proc=None;self.closing=False;self.inflight=False
+        self.goal_key=None
         self.dialog=None;self.edit_allowed=False;self.notice='';self.notice_until=0.
         layout=Q.QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(5)
         self.map=MapView(owner.run);layout.addWidget(self.map)
@@ -178,7 +180,7 @@ class NavigationPanel(Q.QWidget):
             self.proc=C.QProcess(self);self.proc.readyReadStandardOutput.connect(self.read)
             self.proc.readyReadStandardError.connect(self.log)
             self.proc.finished.connect(self.finished)
-            self.proc.start('/usr/bin/python3',['-m','autolife_shelf_grasp_306.navigation_bridge','--run',str(owner.run)])
+            self.proc.start(sys.executable,['-m','autolife_shelf_grasp_306.navigation_bridge','--run',str(owner.run)])
     def refill(self,box,entries,default=None):
         selected=box.currentData() or default
         if [(box.itemText(i),box.itemData(i)) for i in range(box.count())]==entries:return
@@ -227,10 +229,15 @@ class NavigationPanel(Q.QWidget):
         atomic_json(self.owner.root/'data/demo_route.json',record)
         return record
     def command(self,action,**data):
-        if self.proc and self.proc.state()==C.QProcess.Running:
-            if action=='navigate':self.inflight=True
-            self.proc.write((json.dumps(dict(action=action,**data),ensure_ascii=False)+'\n').encode())
-        else:self.info.setText('导航连接未启动，请重新打开抓取程序')
+        packet=(json.dumps(dict(action=action,**data),ensure_ascii=False)+'\n').encode()
+        if not self.proc or self.proc.state()!=C.QProcess.Running or self.proc.write(packet)!=len(packet):
+            message='导航连接不可用，请检查导航后台'
+            self.info.setText(message)
+            if action=='navigate':raise ValueError(message)
+            return
+        if action=='navigate':
+            self.goal_key=(data['run_id'],data['leg'])
+            self.inflight=True
     def change_map(self):
         if Q.QMessageBox.question(self,'更换共享地图','将同步更换控制中心的地图与航点库，并重新定位。继续？',defaultButton=Q.QMessageBox.No)==Q.QMessageBox.Yes:
             self.command('map',path=self.maps.currentData());self.info.setText('正在更换地图…')
@@ -244,6 +251,12 @@ class NavigationPanel(Q.QWidget):
             try:data=json.loads(line)
             except ValueError:continue
             event=data.get('event')
+            scoped=event in ('nav_started','nav_done') or (event=='nav_error' and data.get('leg'))
+            if scoped:
+                if (data.get('run_id'),data.get('leg'))!=self.goal_key:continue
+                if event!='nav_started':
+                    self.goal_key=None
+                    self.inflight=False
             if event=='nav_snapshot':
                 previous=self.data.get('active_map');self.data=data;self.map.data=data;self.map.update()
                 combo=getattr(self.owner,'operation_chain',None)
@@ -267,7 +280,6 @@ class NavigationPanel(Q.QWidget):
                 workflow=getattr(self.owner,'workflow',None)
                 if workflow:workflow.navigation_started(data)
             elif event=='nav_done':
-                self.inflight=False
                 if data.get('success'):
                     self.last_chain=data.get('name','') if data.get('name') in self.data.get('parking_chains',{}) else ''
                 if self.owner.mobile_reach.navigation_event(data):continue
@@ -276,8 +288,8 @@ class NavigationPanel(Q.QWidget):
                 if self.owner.mobile_reach.navigation_event(data):continue
                 self.show_notice(data['text'])
                 workflow=getattr(self.owner,'workflow',None)
-                if workflow and workflow.active and data.get('run_id')==workflow.cursor.run_id:
-                    self.inflight=False;workflow.fail(data['text'])
+                if scoped and workflow and workflow.active and data.get('leg')==workflow.cursor.token:
+                    workflow.fail(data['text'])
                 if self.owner.demo_context and data.get('run_id')==self.owner.demo_context.get('run_id'):
                     self.inflight=False
                     self.owner.demo_failure(data['text'])
@@ -285,13 +297,14 @@ class NavigationPanel(Q.QWidget):
     def log(self):
         with (self.owner.run/'navigation.log').open('ab') as stream:stream.write(bytes(self.proc.readAllStandardError()))
     def finished(self):
-        self.inflight=False
+        was_moving=self.inflight
+        self.inflight=False;self.goal_key=None
         self.data.update(ready=False,starting=False,service_ready=False,snapshot_time=0.,startup_error='导航连接已关闭，请重新打开抓取窗口')
         self.owner.controls()
         self.info.setText('导航连接已关闭')
-        if self.owner.demo_active:self.owner.demo_failure('导航连接中断，未继续抓放；请在控制中心确认底盘已停止')
+        if self.owner.demo_active and was_moving:self.owner.demo_failure('导航连接中断，未继续抓放；请在控制中心确认底盘已停止')
         workflow=getattr(self.owner,'workflow',None)
-        if workflow and workflow.active:workflow.fail('导航连接中断，请确认底盘已停止')
+        if was_moving and workflow and workflow.active:workflow.fail('导航连接中断，请确认底盘已停止')
     def shutdown(self):
         self.product_timer.stop()
         if self.proc and self.proc.state()!=C.QProcess.NotRunning:

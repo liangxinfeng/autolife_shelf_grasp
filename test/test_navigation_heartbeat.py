@@ -7,6 +7,7 @@ import time
 import pytest
 from autolife_shelf_grasp_306.navigation_heartbeat import SourceLease
 from test_navigation_runtime import make_runtime
+from ament_index_python.packages import get_package_share_directory
 
 
 def test_concurrent_touch_is_not_a_future_timestamp(monkeypatch,tmp_path):
@@ -31,7 +32,7 @@ def test_either_source_missing_stops(missing,tmp_path):
 
 
 @pytest.mark.parametrize('stale',['heartbeat','navigation_bridge_heartbeat'])
-def test_stale_latches_and_cannot_resume_previous_goal(stale,tmp_path):
+def test_source_can_recover_but_sustained_loss_exits(stale,tmp_path):
     for name in ('heartbeat','navigation_bridge_heartbeat'):
         (tmp_path/name).touch();os.utime(tmp_path/name,(100.,100.))
     lease=SourceLease(tmp_path)
@@ -39,8 +40,11 @@ def test_stale_latches_and_cannot_resume_previous_goal(stale,tmp_path):
     os.utime(tmp_path/stale,(99.,99.))
     assert not lease.check(wall=100.1,now=1.1)
     os.utime(tmp_path/stale,(100.,100.))
-    assert not lease.check(wall=100.1,now=1.2)
-    assert not lease.should_exit(now=1.5) and lease.should_exit(now=1.61)
+    assert lease.check(wall=100.1,now=1.2)
+    assert not lease.should_exit(now=10.)
+    os.utime(tmp_path/stale,(99.,99.))
+    assert not lease.check(wall=100.1,now=11.)
+    assert not lease.should_exit(now=13.9) and lease.should_exit(now=14.1)
 
 
 def test_launch_sets_private_owner_not_control_center(monkeypatch,tmp_path):
@@ -55,7 +59,7 @@ def test_child_launch_default_and_override():
     from launch import LaunchContext
     from launch.actions import DeclareLaunchArgument
     from launch_ros.actions import Node
-    path=Path('/tmp/task_heartbeat_test/control_center_navigation/launch/bringup_navigation.launch.py')
+    path=Path(get_package_share_directory('control_center_navigation'))/'launch/bringup_navigation.launch.py'
     spec=importlib.util.spec_from_file_location('test_nav_launch',path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     desc=m.generate_launch_description();ctx=LaunchContext()
     for entity in desc.entities:
@@ -71,10 +75,13 @@ def test_child_launch_default_and_override():
 
 def test_real_heartbeat_and_owner_loss(tmp_path):
     # Private DDS domain supplied by test runner; this process publishes only String.
-    assert os.environ['ROS_DOMAIN_ID']=='219'
+    assert int(os.environ['ROS_DOMAIN_ID'])>0
     import rclpy
     from std_msgs.msg import String
-    run=tmp_path/'shelf306_isolated';run.mkdir();topic='/grasp306/operator_heartbeat/'+run.name
+    from autolife_shelf_grasp_306.task_session import open_session
+    run,warning=open_session(tmp_path)
+    assert not warning
+    topic='/grasp306/operator_heartbeat/'+run.name
     for name in ('heartbeat','navigation_bridge_heartbeat'):(run/name).touch()
     rclpy.init();node=rclpy.create_node('task_heartbeat_test')
     messages=[];other=[]
@@ -88,11 +95,11 @@ def test_real_heartbeat_and_owner_loss(tmp_path):
             rclpy.spin_once(node,timeout_sec=.02)
         assert p.poll() is None and len(messages)>20
         assert len({s for _,s in messages})==1 and not other
-        initial=len(messages);end=time.monotonic()+1.5
+        initial=len(messages);end=time.monotonic()+4.2
         while time.monotonic()<end:
             # UI still alive but bridge unresponsive -> must stop.
             (run/'heartbeat').touch();rclpy.spin_once(node,timeout_sec=.02)
-        assert p.poll()==0 and len(messages)-initial<12
+        assert p.poll()==0 and len(messages)-initial<24
         assert 'navigation_bridge_heartbeat' in p.stdout.read().decode()
     finally:
         if p.poll() is None:p.terminate();p.wait(timeout=3)
@@ -104,7 +111,7 @@ def test_launch_owner_exit_shuts_down_only_its_backend(tmp_path):
     from launch import LaunchDescription, LaunchService, LaunchContext
     from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler, SetLaunchConfiguration
     from launch.utilities import perform_substitutions
-    path=Path('/tmp/task_heartbeat_test/control_center_navigation/launch/bringup_all.launch.py')
+    path=Path(get_package_share_directory('control_center_navigation'))/'launch/bringup_all.launch.py'
     spec=importlib.util.spec_from_file_location('test_all_launch',path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     m._active_map_defaults=lambda _:{k:str(tmp_path/k) for k in ('map_yaml','waypoints_file','waypoint_library_directory','active_map_config')}
     desc=m.generate_launch_description()

@@ -2,6 +2,7 @@
 import copy
 import numpy as np
 from scipy.spatial.transform import Rotation
+from .auto_grasp import StationaryPathsExhausted
 
 
 def arm_name(value='left'):
@@ -94,6 +95,7 @@ class ArmPlannerPool:
         self.planners={};self.attempts=[];self.diagnostics=[];self.native_planners={};self.place_planners={}
         self.calibration_profiles=calibration_profiles
         self.warm_attempted=set();self.reach_diagnostics=[]
+        self.solver_exits=[]
 
     def close(self):
         for _,planner in self.native_planners.values():planner.close()
@@ -144,7 +146,10 @@ class ArmPlannerPool:
         if profiles is not None:
             config['target_offset_torso_mm']=list(profiles[side])
             config['target_offsets_by_arm_torso_mm']=copy.deepcopy(profiles)
-        config['up_torso']=list(current_cfg['up_torso'])
+        # Idle model warmup has no measured pose. Never invent an up vector or
+        # retain one from a calibration snapshot; a real request supplies it.
+        config.pop('up_torso',None)
+        if 'up_torso' in current_cfg:config['up_torso']=list(current_cfg['up_torso'])
         if 'semantic_prompt_overrides' in current_cfg:
             config['semantic_prompt_overrides']=copy.deepcopy(current_cfg['semantic_prompt_overrides'])
         return config,tcp
@@ -202,54 +207,116 @@ class ArmPlannerPool:
             self.warm_attempted.add(side)
             return dict(arm=side,status='deferred',reason=str(exc),seconds=time.monotonic()-start)
 
-    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None,on_reach=lambda result:None,reach_hint=None):
+    def plan(self,source,point,product,current_cfg,stopped=lambda:False,on_status=lambda text:None,observation_for_arm=None,on_reach=lambda result:None,reach_hint=None,interactive=False):
+        """Plan before dispatch; automatic selection may validate each arm once.
+
+        Existing operation guards exclude a new grasp while holding an object.
+        Both attempts share the original deadline and each runs the full
+        planner with that arm's calibration, collision and joint-limit policies.
+        Placement/holding ownership is not transferred by this method.
+        """
         from .core import corrected_target
         from .planning_control import PlanningControl,PlanningTimeout,PlanningCancelled
-        from .reach_precheck import screen,STATIONARY_SECONDS
+        from .reach_precheck import screen,slice_control,STATIONARY_SECONDS
         import time
-        self.attempts=[];self.diagnostics=[];self.reach_diagnostics=[]
+        self.attempts=[];self.diagnostics=[];self.reach_diagnostics=[];self.solver_exits=[]
         native=self.base.get('grasp_backend')=='vendor_ik_trajectory'
-        context=PlanningControl(stopped,timeout_sec=STATIONARY_SECONDS) if native else None
-        order=rank_arms(self.fk,point,self.base.get('arm','left')) if self.base.get('auto_arm_selection',True) else [self.base['arm']]
+        budget=current_cfg.get('stationary_plan_budget_sec',self.base.get('stationary_plan_budget_sec',STATIONARY_SECONDS))
+        context=PlanningControl(stopped,on_status,timeout_sec=budget) if native else None
+        if native and interactive:context.limit_total(8.)
+        automatic=current_cfg.get('auto_arm_selection',self.base.get('auto_arm_selection',True))
+        preferred_arm=arm_name(current_cfg.get('arm',self.base.get('arm','left')))
+        order=rank_arms(self.fk,point,preferred_arm) if automatic else [preferred_arm]
         if reach_hint:order.sort(key=lambda side:side!=reach_hint.get('arm'))
         if native:
             on_status('先检查当前高度、腰臂姿态与夹取方向的可抓范围…')
             self.reach_diagnostics=screen(self,source,point,product,current_cfg,order,context,on_status,observation_for_arm,reach_hint)
+            self.solver_exits=[dict(arm=r['arm'],phase='screen',**r['solver_exit'])
+                               for r in self.reach_diagnostics if 'solver_exit' in r]
             preferred={r['arm'] for r in self.reach_diagnostics if r['status']=='key_poses_passed'}
-            outside=len(self.reach_diagnostics)==len(order) and all(r['status']=='outside_workspace' for r in self.reach_diagnostics)
-            on_reach(dict(status='outside_workspace' if outside else 'key_poses_passed' if preferred else 'reposition_review',arms=self.reach_diagnostics,
-                          elapsed_seconds=round(context.clock()-context.started,3),stationary_budget_seconds=STATIONARY_SECONDS))
-            if outside:raise ValueError('快速可达预判：当前身体高度及夹取方向下，双臂均超出工作范围，需要调整停靠位置')
-            order=sorted(order,key=lambda side:side not in preferred)
-            # 先选手、再规划：不能把已经选中的手臂在收回阶段按半份预算截断。
-            # 快速预判可比较双臂，但完整路径只尝试本次选中的一只手。
-            order=order[:1]
+            excluded={r['arm'] for r in self.reach_diagnostics if r['status']=='outside_workspace'}
+            outside=excluded==set(order)
+            review=(len(self.reach_diagnostics)==len(order) and
+                    all(r['status']=='outside_workspace' or r.get('key_pose_miss') or r.get('key_pose_budget_used')
+                        for r in self.reach_diagnostics))
+            if interactive and review and not outside:
+                complete=all(r['status']=='outside_workspace' or r.get('key_pose_miss') for r in self.reach_diagnostics)
+                context.finish_budget=context.timeout_sec
+                elapsed=context.clock()-context.started
+                context.limit_total(max(3. if complete else 4.5,elapsed+1.5))
+            order=sorted((side for side in order if side not in excluded),key=lambda side:side not in preferred)
+            remaining_hands=len(order)
+            if interactive:
+                # Positive contact evidence outranks an incomplete probe, then a
+                # completed miss. Stable order breaks ties by shoulder distance.
+                misses={r['arm'] for r in self.reach_diagnostics if r.get('key_pose_miss')}
+                order=sorted(order,key=lambda side:(side not in preferred,side in misses))[:1]
+            on_reach(dict(status='outside_workspace' if outside else 'key_poses_passed' if preferred else 'reposition_review' if review else 'unresolved',arms=self.reach_diagnostics,
+                          selected_arm=order[0] if interactive and order else None,
+                          elapsed_seconds=round(context.clock()-context.started,3),stationary_budget_seconds=context.timeout_sec))
+            if outside:
+                context.checkpoint()
+                raise StationaryPathsExhausted('当前姿态下，可用手臂的完整工作包络均无法覆盖目标')
+            # 有两只可用手时给另一手保留一次完整路径尝试的时间。
+            # 首手提前失败，后手使用全部余时；明确固定手不拆分预算。
         for index,side in enumerate(order):
             if stopped():raise PlanningCancelled('用户已停止规划，未生成可执行路径')
             label='左手' if side=='left' else '右手'
-            on_status('已选择'+label+'，规划完整抓取与收回路径（原地总预算10秒，不中途换手）…' if native else '自动选手：检查'+label+'抓取与收回路径…')
-            config,tcp=self.arm_config(side,current_cfg)
-            if native:
-                context.checkpoint()
-                # 直接使用整次请求的同一截止时间，预判耗时也在其中；不重置或延长10秒。
-                context.on_status=on_status
-                planner=self.native_planner(config,context)
-                planner.preferred_grasp_yaw=next((r['yaw_offset_deg'] for r in self.reach_diagnostics
-                    if r['arm']==side and r['status']=='key_poses_passed'),None)
-            else:planner=self.for_config(config)
-            began=time.monotonic()
+            on_status(('首选路径未通过，验证'+label if index else '已选择'+label)+
+                f'，规划完整抓取与收回路径（共用原地{context.timeout_sec:g}秒预算）…' if native else '自动选手：检查'+label+'抓取与收回路径…')
+            began=time.monotonic();planner=None
             try:
+                if context:context.set_stage('原地完整路径',arm=side)
+                config,tcp=self.arm_config(side,current_cfg)
+                if native:
+                    # Only pure planning is sliced. No executor timeouts or
+                    # already dispatched trajectories are changed here.
+                    context.checkpoint()
+                    remaining=context.deadline-context.clock()
+                    # A missed key pose on the alternative is weaker evidence
+                    # than an unfinished probe. Keep time to try both arms.
+                    missed={r['arm'] for r in self.reach_diagnostics if r.get('key_pose_miss')}
+                    favored=side not in missed and index+1<len(order) and order[index+1] in missed
+                    share=.75 if favored else .5
+                    arm_context=(slice_control(context,remaining*share,on_status) if index+1<len(order) else context)
+                    planner=self.native_planner(config,arm_context)
+                    planner.preferred_grasp_yaw=next((r['yaw_offset_deg'] for r in self.reach_diagnostics
+                        if r['arm']==side and r['status']=='key_poses_passed'),getattr(planner,'preferred_grasp_yaw',None) if interactive else None)
+                else:planner=self.for_config(config)
                 arm_point,arm_product=(observation_for_arm(side,config) if observation_for_arm else (point,product))
                 center,correction=corrected_target(arm_point,config.get('target_offset_torso_mm',[0.,0.,0.]))
-                plan=planner.plan(source,tcp,center,arm_product)
+                plan=self._stationary_path(planner,source,tcp,center,arm_product,side,
+                                           arm_context if native else None,on_status)
+                # A fully validated result that has already returned is usable
+                # within the overall deadline; never restart a completed path
+                # just because it crossed a hand's allocation on its last call.
                 if context:context.checkpoint()
-            except (ValueError,PlanningTimeout) as exc:
-                self.attempts.append({'arm':side,'status':'timeout' if isinstance(exc,PlanningTimeout) else 'unavailable','reason':str(exc),'seconds':round(time.monotonic()-began,3)})
+            except (ValueError,OSError,PlanningTimeout) as exc:
+                status=('timeout' if isinstance(exc,PlanningTimeout) else
+                        'exhausted' if isinstance(exc,StationaryPathsExhausted) else 'unavailable')
+                self.attempts.append({'arm':side,'status':status,'reason':str(exc),'seconds':round(time.monotonic()-began,3)})
                 self.diagnostics.append({'arm':side,'failures':list(getattr(planner,'candidate_failures',[]))})
                 if context:context.checkpoint()
+                if isinstance(exc,PlanningTimeout) and index+1>=len(order):raise
                 continue
             if stopped():raise PlanningCancelled('用户已停止规划，未生成可执行路径')
             self.attempts.append({'arm':side,'status':'planned','seconds':round(time.monotonic()-began,3)})
             plan.update(arm=side,arm_selection=copy.deepcopy(self.attempts),tool_geometry=config['tool_geometry'],reach_precheck=copy.deepcopy(self.reach_diagnostics))
             return plan,planner,config,tcp,center,correction
-        raise ValueError(('选定手臂路径未通过：' if native else '双臂路径均未通过：')+'；'.join(('左手' if a['arm']=='left' else '右手')+'：'+a['reason'] for a in self.attempts))
+        reason=('双臂路径均未通过：' if len(order)>1 else '选定手臂路径未通过：')+'；'.join(('左手' if a['arm']=='left' else '右手')+'：'+a['reason'] for a in self.attempts)
+        if self.attempts and all(a['status']=='exhausted' for a in self.attempts):
+            if native and interactive and remaining_hands>1 and not review:
+                raise ValueError(reason+'；另一手未完成路径验证，当前证据不足以建议移动底盘')
+            raise StationaryPathsExhausted(reason)
+        raise ValueError(reason)
+
+    def _stationary_path(self,planner,source,tcp,center,product,side,context,on_status):
+        from .vendor_ik_process import VendorSolverExited
+        for attempt in range(2):
+            try:return planner.plan(source,tcp,center,product)
+            except VendorSolverExited as exc:
+                self.solver_exits.append(dict(arm=side,phase='stationary',**exc.details))
+                if context is None or attempt or len(self.solver_exits)>1:raise
+                context.checkpoint()
+                planner.close()
+                on_status('原厂计算进程已退出，使用新进程复核当前原地抓取请求…')

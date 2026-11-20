@@ -1,5 +1,6 @@
 import numpy as np
-from autolife_shelf_grasp_306.selection import resolve_selected
+from autolife_shelf_grasp_306.selection import resolve_selected,require_selected
+from autolife_shelf_grasp_306.auto_grasp import CandidateUnavailable
 
 def item(i=1,dx=0,product=None,feature=None):
     mask=np.zeros((100,160),bool);mask[20:80,30+dx:70+dx]=True
@@ -27,6 +28,18 @@ def test_disappeared_moved_different_or_ambiguous_target_stops():
     for candidates in ([],[item(2,dx=65)],[item(2,feature=np.array([0.,1.]))],[item(2,dx=2),item(3,dx=-2)]):
         result,diag=resolve_selected(item(),candidates)
         assert result is None and diag['reason']
+
+
+def test_only_stationary_task_can_try_another_candidate_after_identity_loss():
+    for fresh in ([],[item(2,dx=2),item(3,dx=-2)]):
+        selected,identity=resolve_selected(item(),fresh)
+        for task_scan,after_move,expected in ((True,False,CandidateUnavailable),(True,True,ValueError),(False,False,ValueError)):
+            try:require_selected(selected,identity,task_scan=task_scan,after_move=after_move)
+            except ValueError as exc:
+                assert type(exc) is expected and str(exc)==identity['reason']
+            else:raise AssertionError('Lost identity cannot produce a selected target')
+    selected,identity=resolve_selected(item(),[item(7)])
+    assert require_selected(selected,identity,task_scan=True,after_move=False) is selected
 
 def test_low_appearance_similarity_not_rescued_by_same_id():
     assert resolve_selected(item(),[item(feature=np.array([.1,1.]))])[0] is None

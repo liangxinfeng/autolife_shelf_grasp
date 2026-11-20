@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from .resources import collision_model_path
 
 PITCH = 'Joint_Neck_Pitch'
 ROLL = 'Joint_Neck_Roll'
@@ -57,10 +58,9 @@ def verify_model(kin):
         raise ValueError('颈部恢复模型已改变，须重新核对，不能沿用旧恢复范围')
 
 
-def verify_installed_model():
-    from ament_index_python.packages import get_package_share_directory
+def verify_installed_model(cfg):
     from types import SimpleNamespace
-    path=Path(__file__).resolve().parents[1]/'urdf/robot_v3_1_simplified.urdf'
+    path=collision_model_path(cfg)
     verify_model(SimpleNamespace(urdf_path=str(path)))
 
 

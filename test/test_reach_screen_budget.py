@@ -17,7 +17,7 @@ def harness(monkeypatch,prepare=(0.,0.,0.,0.)):
     clock=Clock();children=[];prepared=[]
     monkeypatch.setattr(reach.time,'monotonic',clock)
     def control(*args,**kwargs):
-        child=PlanningControl(*args,clock=clock,**kwargs)
+        child=PlanningControl(*args,**{**kwargs,'clock':clock})
         children.append(child);return child
     monkeypatch.setattr(reach,'PlanningControl',control)
     parent=PlanningControl(timeout_sec=10.,clock=clock)
@@ -49,7 +49,7 @@ def test_cold_preparation_does_not_consume_shared_native_screen_budget(monkeypat
     monkeypatch.setattr(reach,'native_key_poses',probe)
     rows=run()
     assert prepared==['left','right'] and len(rows)==2
-    assert calls==pytest.approx([reach.SCREEN_SECONDS,reach.SCREEN_SECONDS-.4])
+    assert calls==pytest.approx([reach.SCREEN_SECONDS/2,reach.SCREEN_SECONDS-.4])
     assert rows[-1]['status']=='key_poses_passed'
     assert clock()==pytest.approx(5.1) and parent.deadline==10.
     assert children[-1].deadline<parent.deadline
@@ -65,7 +65,7 @@ def test_actual_native_time_is_shared_and_cannot_restart_per_arm(monkeypatch):
         return {'status':'unresolved'}
     monkeypatch.setattr(reach,'native_key_poses',probe)
     rows=run(('left','right','left'))
-    assert calls==pytest.approx([1.5,.6])
+    assert calls==pytest.approx([.5,.3])
     assert prepared==['left','right'] and len(rows)==2
     assert all(row['status']=='unresolved' for row in rows)
     assert parent.terminal is None and parent.deadline==10.

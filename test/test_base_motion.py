@@ -7,7 +7,7 @@ from autolife_shelf_grasp_306.chassis import InputWatchdog
 
 def test_braking_sweep_not_constant_speed_extrapolation():
     # 0.15m/s: 9cm reaction budget + 4.5cm braking, not an entire constant-speed horizon.
-    assert clearance([[.44,0]],[.15,0,0])
+    assert clearance([[.50,0]],[.15,0,0])
     assert not clearance([[.36,0]],[.15,0,0])
     assert clearance([[0,.6]],[.30,0,0])
     assert not clearance([[.5,0]],[.30,0,0])
@@ -36,10 +36,10 @@ def test_measured_speed_checks_braking_when_command_zero():
 
 
 @pytest.mark.parametrize('front',[True,False])
-@pytest.mark.parametrize('point,removed',[([.128,-.115],True),([.19,-.115],False),([.128,-.17],False),([.29,0],False),([0,.29],False)])
+@pytest.mark.parametrize('point,removed',[([.128,-.115],True),([.19,-.115],True),([.128,-.18],False),([.31,0],False),([0,.29],False)])
 def test_verified_chassis_interior_only(point,removed,front):
     x,y=point
-    lx,ly=(.215-x,y) if front else (x+.215,-y)
+    lx,ly=(x-.2634,y) if front else (x+.215,-y)
     ranges=np.full(360,np.inf);ranges[0]=math.hypot(lx,ly)
     out=scan_points(ranges,math.atan2(ly,lx),math.pi/180,.01,25,front)
     assert len(out)==(0 if removed else 1)

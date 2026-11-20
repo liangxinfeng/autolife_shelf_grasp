@@ -12,8 +12,8 @@ def retryable_surface_error(error,attempt):
 
 def retryable_placement_error(diagnostics,attempt):
     """Reobserve clutter-rejected geometry; no motion or guard relaxation."""
-    return attempt<2 and any('放置轨迹接近桌面已有物品' in d.get('error','')
-                             for d in diagnostics)
+    errors=[d['error'] for d in diagnostics if d.get('error')]
+    return attempt<2 and bool(errors) and '放置轨迹接近桌面已有物品' in errors[-1]
 
 
 def fuse_stationary_depth(depths,scale):

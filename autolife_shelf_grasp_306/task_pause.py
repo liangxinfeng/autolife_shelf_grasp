@@ -72,7 +72,7 @@ def archive_held(run):
 def defer_call(owner, method, *args):
     auto=getattr(owner,'automatic',None)
     if auto and auto.active and auto.paused:
-        cursor=owner.workflow.cursor;token=cursor.token if cursor and cursor.active else None
+        cursor=owner.workflow.cursor;token=cursor.token if cursor and cursor.pending else None
         auto.deferred[(method.__name__,token)]=(method,args,token)
         return True
     return False

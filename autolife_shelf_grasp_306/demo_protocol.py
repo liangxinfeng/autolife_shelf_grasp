@@ -1,4 +1,5 @@
 """Prevent release from stale, unrelated or incomplete demo requests."""
+from .runtime_identity import identity
 import json
 from .arm_selection import require_same_arm,gripper_name,plan_arm
 
@@ -22,7 +23,8 @@ def validate_place(plan,run):
         if plan_arm(grasp)!=arm:raise ValueError('放置与抓取手臂不一致')
         check_held_gripper(plan['source_q'],record)
     else:
-        record=json.loads((run/'demo_grasp_result.json').read_text())
+        from .held_receipt import current_payload
+        record=current_payload(run)
         context=json.loads((run/'demo_run.json').read_text())
         base=json.loads((run/'demo_base_result.json').read_text())
         if base.get('status')!='completed' or (context.get('run_id') and (base.get('run_id')!=context['run_id'] or
@@ -43,8 +45,8 @@ def validate_place(plan,run):
             raise ValueError('观察路径无效，禁止夹爪操作')
         held=float(plan.get('held_gripper_deg',float('nan')))
         previous=float(record.get('q',{}).get(jaw,float('nan')))
-        if not math.isfinite(held) or not math.isfinite(previous) or abs(held-previous)>8:
-            raise ValueError('观察路径的持瓶状态不一致')
+        if not math.isfinite(held) or not math.isfinite(previous):
+            raise ValueError('观察路径缺少有效夹爪反馈')
         if abs(float(plan['source_q'][jaw])-held)>1e-6:
             raise ValueError('观察路径夹爪起始状态不一致')
         return
@@ -80,10 +82,10 @@ class StationaryBaseGuard:
         from control_center_chassis_guard import ChassisControlLease
         from .base_feedback import BaseOdometryReader
         self.time=time;self.math=math;self.origin=None;self.reader=None
-        self.lease=ChassisControlLease(domain_id='0',robot_id='345')
+        self.lease=ChassisControlLease(domain_id=identity().domain_id,robot_id=identity().robot_id)
         if not self.lease.acquire(timeout_sec=0):
             self.lease.shutdown();raise ValueError('动作准备时底盘控制权不可用')
-        try:self.reader=BaseOdometryReader(node,'/topic_gv_wheel_odom_0_345')
+        try:self.reader=BaseOdometryReader(node,f'/topic_gv_wheel_odom_{identity().topic_suffix}')
         except BaseException:
             self.lease.release();self.lease.shutdown();raise
 

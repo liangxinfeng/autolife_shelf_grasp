@@ -43,7 +43,7 @@ def jaw_envelope_bounds(low,high,physical_tcp,max_width):
 
 def placement_trials(targets,seed_count):
     """Fair, deterministic position/heading/branch coverage within a deadline."""
-    yaws=(0,-5,5,-10,10,-15,15,-20,20,-25,25,-30,30,-35,35,-40,40)
+    yaws=(0,-25,25,-15,15,-40,40,-90,90,-5,5,-10,10,-20,20,-30,30,-35,35,-60,60,180)
     order=sorted((i+.45*j+.75*k,i,j,k) for i in range(len(targets))
                  for j in range(len(yaws)) for k in range(seed_count))
     return ((targets[i],yaws[j],k) for _,i,j,k in order)
@@ -291,13 +291,14 @@ def placement_candidates(positions,current,limit=10,spacing=.045,clearance=None,
     if cover_surface:
         # Keep the best local point, then cover separate tabletop regions.
         # A crowded near corner must not consume the entire endpoint budget.
-        selected=[positions[order[0]]];remaining=list(map(int,order[1:]))
-        while remaining and len(selected)<limit:
-            distances=np.min(np.linalg.norm(positions[remaining,None,:]-np.asarray(selected)[None,:,:],axis=2),axis=1)
-            quality=distances-.25*(score[remaining]-score[order[0]])
-            index=int(np.argmax(quality))
+        ranked=positions[order];selected=[ranked[0]]
+        distances=np.linalg.norm(ranked-ranked[0],axis=1)
+        penalty=.25*(score[order]-score[order[0]])
+        while len(selected)<min(limit,len(ranked)):
+            index=int(np.argmax(distances-penalty))
             if distances[index]<min(.015,spacing):break
-            selected.append(positions[remaining.pop(index)])
+            selected.append(ranked[index])
+            distances=np.minimum(distances,np.linalg.norm(ranked-ranked[index],axis=1))
         return selected
     for separation in (spacing,min(.015,spacing)):
         for i in order:
@@ -338,7 +339,7 @@ def upright_heading(actual,reference,up):
     return Rotation.from_rotvec(up*np.deg2rad(yaw)).as_matrix()@reference,yaw
 
 
-def rank_place_ik(planner,source,tcp,candidates,grasp_R,up,product,settings,table_guard,deadline,diagnostics,fallback_candidates=(),alternative_seeds=(),allow_detour=False,free_heading=False,interior=None,ground=None):
+def rank_place_ik(planner,source,tcp,candidates,grasp_R,up,product,settings,table_guard,deadline,diagnostics,fallback_candidates=(),alternative_seeds=(),allow_detour=False,free_heading=False,interior=None,ground=None,first_per_site=False):
     """Bounded endpoint screening before any expensive smoothed path checks."""
     from_angles=np.array([source[n] for n in planner.names]);ranked=[];blocked=[]
     attempts=0;started=time.monotonic()
@@ -353,6 +354,7 @@ def rank_place_ik(planner,source,tcp,candidates,grasp_R,up,product,settings,tabl
         # Validate support at the actual solved landing, not the nominal seed.
         for target,yaw,seed_index in trials:
             if time.monotonic()>min(deadline,started+batch_budget):break
+            if first_per_site and any(r['target'] is target for r in ranked):continue
             attempts+=1
             desired=Rotation.from_rotvec(up*np.deg2rad(yaw)).as_matrix()@grasp_R
             screening_stage='above_ik'
@@ -382,6 +384,7 @@ def rank_place_ik(planner,source,tcp,candidates,grasp_R,up,product,settings,tabl
                            max(abs(above[n]-r['above'][n]) for n in planner.names)<1. for r in ranked):
                     ranked.append(dict(target=target,yaw=yaw,rotation=desired,above=above,score=score,seed_index=seed_index,**edge))
                 if len(ranked)>=6:break
+                if first_per_site and len(ranked)==len(targets):break
             except (IKFailure,CollisionFailure,ValueError) as exc:
                 diagnostics.append(dict(phase='endpoint_ik',screening_stage=screening_stage,target=target.tolist(),yaw=yaw,seed_index=seed_index,error=str(exc)))
                 if allow_detour and screening_stage=='approach_collision':
@@ -467,15 +470,38 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
     alternatives=[]
     if len(carry_waypoints)>=2:
         alternatives=[{**source,**{n:carry_waypoints[-2][n] for n in planner.names}}]
-    ranked=rank_place_ik(planner,source,tcp,candidates,grasp_R,up,product,settings,table_guard,deadline,planner.place_diagnostics,fine,alternatives,allow_detour=True,free_heading=True,interior=interior,ground=ground)
-    if not ranked:raise ValueError('桌面有空位，但候选放置姿态未通过可达性或障碍间距检查')
+    def choices():
+        # A locally valid endpoint can still fail its descent or withdrawal.
+        # Resume the search in other tabletop regions after full-path rejection.
+        nearest=[]
+        for batch,(sites,quick) in enumerate(((candidates[:1],True),(fine[:3],True),
+                                             (candidates[1:]+fine[3:],True),(candidates+fine,False))):
+            if not sites or time.monotonic()>=deadline:continue
+            planner._native_seed_only=quick
+            try:
+                cutoff=min(deadline,time.monotonic()+.6) if batch==0 else deadline
+                ranked=rank_place_ik(planner,source,tcp,sites,grasp_R,up,product,settings,table_guard,cutoff,
+                    planner.place_diagnostics,alternative_seeds=alternatives,allow_detour=True,free_heading=True,
+                    interior=interior,ground=ground,first_per_site=quick)
+            finally:planner._native_seed_only=False
+            if batch==0:
+                nearest=ranked
+                for choice in nearest:yield choice,0.,len(nearest)
+                continue
+            for h in (0.,.03,.08):
+                for choice in ranked:yield choice,h,len(ranked)
+                if h and nearest:
+                    for choice in nearest:yield choice,h,len(nearest)
+            nearest=[]
+        for h in (.03,.08):
+            for choice in nearest:yield choice,h,len(nearest)
     checked_cache=set()
     approach_cache={}
     # Only screened poses get complete interpolation and collision validation.
     # Endpoint success alone never authorizes motion.
     # Try the higher clearance exit first. A lower exit remains available for
     # scenes with overhead constraints; both receive identical full validation.
-    for choice,exit_lift in ((c,h) for c in ranked for h in (0.,.03,.08)):
+    for choice,exit_lift,screened_count in choices():
         target=choice['target'];yaw=choice['yaw']
         try:
             phase='place_approach';progress=0
@@ -494,7 +520,7 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
             goal=choice['above']
             check(goal,True)
             progress=1
-            key=id(choice)
+            key=(tuple(target),tuple(choice['above'][n] for n in planner.names),bool(choice.get('needs_detour')))
             if key not in approach_cache:
                 try:
                     approach_cache[key]=(checked_transfer_approach(planner,source,goal,tcp,up,check)
@@ -602,7 +628,7 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
                 self_collision_checked=True,table_height_checked=True,checked_states=checked,
                 joint_limit_policy=planner.joint_limit_policy,urdf_sha256=planner.fk.sha,
                 table=table,placement_search='endpoint_screen_then_full_path',
-                ik_screened=len(ranked),selected_yaw_deg=yaw,selected_seed_index=choice['seed_index'],
+                ik_screened=screened_count,selected_yaw_deg=yaw,selected_seed_index=choice['seed_index'],
                 preferred_edge_margin_m=interior.preferred,
                 selected_edge_margin_m=float(interior.margins([release_start],ground)[0]),
                 exit_lift_m=exit_lift,seconds=round(time.monotonic()-started,2))
@@ -619,4 +645,6 @@ def plan_place(planner,source,tcp,grasp,points,table,settings):
             planner.place_diagnostics.append(dict(target=target.tolist(),yaw=yaw,phase=phase,
                 error='规划预算用尽',elapsed_s=round(time.monotonic()-started,3),checked_states=checked))
             raise
+    if time.monotonic()>=deadline:raise TimeoutError('放置规划预算用尽，当前搜索尚无完整路径')
+    if best_progress<0:raise ValueError('桌面有空位，但候选放置姿态未通过可达性或障碍间距检查')
     raise ValueError('已找到桌面空位，但当前姿态没有可行放置路径：'+last)

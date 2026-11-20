@@ -47,7 +47,7 @@ def test_real_workflow_start_uses_task_command(tmp_path):
     (tmp_path/'data/products.json').write_text(json.dumps({'products':[dict(id='b',name='盒子',category='beverage')]}))
     calls=[]
     state=SimpleNamespace(owner=SimpleNamespace(root=tmp_path,send=lambda *a,**kw:calls.append((a,kw))),
-        cursor=Cursor({'steps':[dict(kind='grasp',target='盒子')]}))
+        cursor=Cursor({'steps':[dict(kind='grasp',target='盒子')]}),write_context=lambda:None)
     Workflow.start_scan(state)
     assert state.semantic_target and state.phase=='scan'
     assert calls==[(('scan_task',),{'target':'盒子'})]
@@ -65,8 +65,12 @@ def test_model_receives_explicit_task_prompt():
 def test_worker_keeps_scope_through_fresh_plan_and_logs_recognition():
     import autolife_shelf_grasp_306.worker as worker
     source=Path(worker.__file__).read_text()
-    assert 'infer_scene(perception,scene,store,mode,task_recognition)' in source
-    assert 'infer_scene(perception,frame,store,mode,task_recognition)' in source
+    import ast
+    calls=[n for n in ast.walk(ast.parse(source)) if isinstance(n,ast.Call) and
+           isinstance(n.func,ast.Name) and n.func.id=='infer_scene']
+    scoped={n.args[1].id for n in calls if isinstance(n.args[-1],ast.Name) and
+            n.args[-1].id=='task_recognition'}
+    assert scoped=={'scene','frame'}
     assert "recognition_diagnostics.json" in source
     section=source.split("if action=='scan_task':",1)[1].split("if action=='set_prompt':",1)[0]
     assert 'runtime_path' not in section and 'semantic_prompt_overrides' not in section

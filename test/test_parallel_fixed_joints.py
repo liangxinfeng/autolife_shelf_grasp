@@ -19,11 +19,12 @@ def callback(tmp_path, arm='left', prepared=None, backend=True, token='T'):
     fn=next(n for n in ast.walk(main) if isinstance(n,ast.FunctionDef) and n.name=='checked')
     node=NS(_hardware_ready=True,snapshot=lambda:dict(current))
     env=dict(prepared=prepared,vendor_grasp=backend,plan=dict(plan_id='replay',parallel_prepare_token=token),
-        source=source,run=tmp_path,node=node,spin=lambda:None,base_guard=None,
+        source=source,run=tmp_path,node=node,supervision=e.MotionSupervisor(tmp_path),base_guard=None,
         BODY=e.BODY,NECK=e.NECK,ARMS=e.ARMS,other=other,jaw=e.gripper_name(arm),
         gripper_name=e.gripper_name,workspace_reset=False,preparing=False,native_motion=backend,
         arm_reset_active=False,placing=False,observing=False,released=False,
         atomic_json=lambda path,value:reports.append((path.name,value)))
+    env['spin']=lambda:env['base_guard'].check() if env['base_guard'] is not None else None
     exec(compile(ast.Module(body=[assignments['parallel_grasp_opening'],assignments['compare_source'],fn],
         type_ignores=[]),'<actual executor checked>','exec'),env)
     return env,current,reports
@@ -46,7 +47,7 @@ def test_authorized_parallel_opening_is_not_fixed_body_motion(tmp_path,arm):
 def test_unrelated_or_unverified_preparation_does_not_exempt_fixed_jaw(tmp_path,prepared,backend,token):
     env,q,reports=callback(tmp_path,prepared=prepared,backend=backend,token=token)
     q['Joint_Right_Gripper']=13.19
-    assert not env['parallel_grasp_opening'] and env['compare_source']==env['source']
+    assert not env['parallel_grasp_opening'] and 'Joint_Right_Gripper' in env['compare_source']
     with pytest.raises(ValueError,match='Joint_Right_Gripper'):env['checked']()
     assert reports[0][1]['delta']==pytest.approx(257.19339614868164)
 

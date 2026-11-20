@@ -1,4 +1,5 @@
 """手动示教沿用300的单次保持会话：原厂负责使能，页面内复用，不重复切模式。"""
+from .runtime_identity import identity
 import json,time,math
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
@@ -10,7 +11,7 @@ class ManualHoldSession(PositionSyncSession):
     def __init__(self,node,**kwargs):
         super().__init__(node,**kwargs)
         self.vendor_state=None;self.vendor_stamp=0.;self.verified=False
-        self.subscription=node.create_subscription(String,'/robot_state_topic_0_345',self.on_state,10)
+        self.subscription=node.create_subscription(String,f'/robot_state_topic_{identity().topic_suffix}',self.on_state,10)
 
     def on_state(self,msg):
         try:

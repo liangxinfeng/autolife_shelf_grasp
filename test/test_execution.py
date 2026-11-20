@@ -9,7 +9,7 @@ from autolife_handeye_calibration_306.core import ARMS,BODY,NECK
 
 
 @pytest.mark.parametrize('mode',['hold_reset','hold_reset_failure','hold_reset_drift','hold_reset_stop','old_vendor_reset','unchecked_reset','reset','reset_recovery','reset_recovery_blocked','reset_ready','reset_parallel','reset_open_offset','reset_open_blocked','grasp','grasp_contact','grasp_blocked','grasp_sync_refused','grasp_fixed','grasp_place','grasp_observe','grasp_observe_slip'])
-def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unchanged'):
+def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unchanged',cleanup_fault=None,operator_confirmed_empty=False):
     names=BODY+NECK+ARMS['left']+ARMS['right']
     source={n:0. for n in names};source.update(Joint_Left_Gripper=180.,Joint_Right_Gripper=180.)
     if mode=='grasp_place_ready':source['Joint_Right_Gripper']=10.
@@ -33,6 +33,16 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
         @property
         def _feedback_monotonic(self):return now[0]
         def snapshot(self):return dict(self.q)
+        def create_client(self,service,name):
+            groups=dict(neck=NECK,leg_waist=BODY,left_arm=ARMS['left'],right_arm=ARMS['right'],
+                        left_gripper=['Joint_Left_Gripper'],right_gripper=['Joint_Right_Gripper'])
+            group=next(g for g in groups if name.endswith('_'+g))
+            def response():
+                return SimpleNamespace(success=True,message=json.dumps(dict(protocol=2,group=group,
+                    positions={n:self.q[n] for n in groups[group]})))
+            return SimpleNamespace(service_is_ready=lambda:True,
+                call_async=lambda request:SimpleNamespace(done=lambda:True,result=response))
+        def destroy_client(self,client):pass
         def unlock(self):
             unlock_calls.append(True)
             if mode=='hold_reset_failure':return SimpleNamespace(success=False,message='使能拒绝')
@@ -66,7 +76,8 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
     monkeypatch.setattr(e,'CalibrationBridge',FakeBridge)
     sessions=[]
     class FakeSession:
-        def __init__(self,node):self.node=node;self.active=False;sessions.append(self);self.closed=False
+        def __init__(self,node,preserve_gripper_targets=False):
+            self.node=node;self.active=False;sessions.append(self);self.closed=False
         def enter(self,spin):
             if mode=='grasp_sync_refused':raise ValueError('SYNC rejected')
             self.active=True
@@ -75,7 +86,7 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
             if handoff=='jaw_large_drift':self.node.q['Joint_Left_Gripper']-=8.1
             if handoff=='arm_drift':self.node.q[ARMS['left'][3]]+=.6
         def tick(self):pass
-        def close(self):
+        def close(self,preserve_grippers=False):
             self.active=False;self.closed=True
             if handoff=='exit_settle':self.node.q['Joint_Left_Gripper']-=3.
             return True
@@ -98,6 +109,9 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
     import autolife_handeye_calibration_306.core as core
     monkeypatch.setattr(core,'digest',lambda _:'hash')
     monkeypatch.setattr(core,'Kinematics',lambda _:SimpleNamespace(fk=lambda *args:np.eye(4)))
+    from autolife_shelf_grasp_306.calibration_profiles import CalibrationProfiles
+    # Isolate model/camera resources while retaining the executor's digest check.
+    monkeypatch.setattr(CalibrationProfiles,'resolve',lambda self,cfg:({},'hash'))
     from autolife_shelf_grasp_306 import prepare
     monkeypatch.setattr(prepare,'digest',lambda _:'hash')
     if mode.startswith('grasp_place') or mode.startswith('grasp_observe'):
@@ -121,6 +135,12 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
                           {'name':'reset','waypoints':[inside,goal]}]
     if mode.startswith('grasp'):
         cfg.update(hardware_execution=True,supervised_experiment=True,calibration='fake',tcp_offset_mm=15.)
+        curve=tmp_path/'gripper_curve.json'
+        curve.write_text(json.dumps(dict(hardware='dm_type1',measured=True,
+            arms={'left':[[0.,330.],[45.,180.],[90.,10.]]})))
+        cfg['gripper_width_calibration']=str(curve)
+        from autolife_shelf_grasp_306.grip_width import closing_command
+        plan.update(grasp_width_m=.05,grip_command=closing_command(.05,50.,cfg))
         plan.update(kind='grasp',geometry_version=2,tcp=[0,0,0],up_torso=[0,0,-1],calibration_sha256='hash',tcp_offset_mm=15.,
                     plan_id='plan-token',run_id=tmp_path.name,prepare_token='reset-token',
                     product={'id':'ice-tea','name':'冰红茶','diameter_m':.07},segments=[])
@@ -157,11 +177,38 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
             plan.update(kind='observe',held_gripper_deg=180.)
             plan['segments']=plan['segments'][:1];plan['segments'][0]['phase']='observe_lift'
         (tmp_path/'prepare_result.json').write_text(json.dumps({'status':'prepared','token':'reset-token'}))
+    if mode=='grasp_expired':plan['created_monotonic']=50.
     path=tmp_path/'plan.json';path.write_text(json.dumps(plan));(tmp_path/'heartbeat').touch()
     monkeypatch.setattr(sys,'argv',['executor','--plan',str(path),'--run',str(tmp_path),
-                                  '--expected-plan-id','plan-token','--expected-product-id','ice-tea'])
+                                  '--expected-plan-id','plan-token','--expected-product-id','ice-tea',
+                                  '--execution-id','current-attempt']+(['--operator-confirmed-empty-grippers'] if operator_confirmed_empty else []))
+    cleanup_attempts=[]
+    if cleanup_fault:
+        original=e.attempt_cleanup
+        def attempt(errors,stage,operation):
+            def injected():
+                cleanup_attempts.append(stage)
+                if stage==cleanup_fault:raise RuntimeError('injected '+stage)
+                return operation()
+            return original(errors,stage,injected)
+        monkeypatch.setattr(e,'attempt_cleanup',attempt)
     e.main()
     result=json.loads((tmp_path/'execution_result.json').read_text())
+    assert result['execution_id']=='current-attempt'
+    if cleanup_fault:
+        assert result['status']=='stopped' and not result['safe_to_retry'],result
+        assert result['plan_id']=='plan-token'
+        if instances:assert 'destroy_node' in cleanup_attempts
+        assert 'ros_shutdown' in cleanup_attempts
+        assert any(entry['stage']==cleanup_fault for entry in result.get('cleanup_errors',[])+result.get('receipt_errors',[]))
+        if mode=='grasp' and cleanup_fault!='held_receipt':
+            held=json.loads((tmp_path/'held_object.json').read_text())
+            assert held['status']=='uncertain' and not held['grip_success_verified']
+        return
+    if mode=='grasp_expired':
+        assert result['reason_code']=='PLAN_EXPIRED' and result['safe_to_retry']
+        assert result['plan_id']=='plan-token' and not result['effects'] and not instances
+        return
     if mode in ('old_vendor_reset','unchecked_reset'):
         assert result['status']=='stopped' and not instances and not unlock_calls
         return
@@ -177,9 +224,9 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
         assert instances[0].q['Joint_Left_Gripper']==180 and instances[0].q['Joint_Right_Gripper']==180
         assert instances[0].tolerance==1.
         return
-    if mode.startswith('grasp'):assert len(sessions)==1 and sessions[0].closed
+    if mode.startswith('grasp'):assert len(sessions)==1 and sessions[0].closed,result
     else:assert not sessions
-    if handoff in ('jaw_large_drift','arm_drift'):
+    if handoff=='arm_drift':
         assert result['status']=='stopped' and 'SYNC切换期间' in result['reason']
         assert not arm_started and not jaw_events
         diagnostic=json.loads((tmp_path/'pose_handoff.json').read_text())
@@ -190,8 +237,9 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
         assert all(result.get('q',instances[0].q)[n]==source[n] for n in BODY+NECK+ARMS['right'])
         if mode=='grasp_observe':
             assert result['status']=='observed',result
-            assert result['q']['Joint_Left_Gripper']==(180-.8524 if handoff=='jaw_settle' else 180-2.3386924574272427 if handoff=='jaw_recorded' else 180)
-        else:assert result['status']=='stopped' and '夹爪状态改变' in result['reason']
+            assert result['q']['Joint_Left_Gripper']==180-{'jaw_settle':.8524,'jaw_recorded':2.3386924574272427,'jaw_large_drift':8.1}.get(handoff,0.)
+        else:
+            assert result['status']=='observed' and result['q']['Joint_Left_Gripper']==200.
         assert json.loads((tmp_path/'prepare_result.json').read_text())['status']=='prepared'
         return
     if mode.startswith('grasp_place'):
@@ -199,9 +247,9 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
         assert len(jaw_events)==1 and abs(jaw_events[0][0]-10.)<=.35 and jaw_events[0][1]==10.
         assert result['q']['Joint_Left_Gripper']==10 and result['q']['Joint_Right_Gripper']==source['Joint_Right_Gripper']
         if mode=='grasp_place_ready':
-            assert result['prepared_after_place'] and result['auto_prepare_allowed']
+            assert not result['prepared_after_place'] and not result['auto_prepare_allowed']
             receipt=json.loads((tmp_path/'prepare_result.json').read_text())
-            assert receipt['status']=='prepared' and receipt['token']!='reset-token' and receipt['source']=='placed_return'
+            assert receipt['status']=='prepared' and receipt['token']=='reset-token'
         assert all(result['q'][n]==source[n] for n in BODY+NECK+ARMS['right'])
         return
     if mode=='grasp_sync_refused':
@@ -210,24 +258,22 @@ def test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,handoff='unch
         assert json.loads((tmp_path/'prepare_result.json').read_text())['status']=='prepared'
         return
     if mode=='reset_open_blocked':
-        assert result['status']=='stopped' and '未稳定到位' in result['reason'],result
-        assert json.loads((tmp_path/'prepare_result.json').read_text())['status']!='prepared'
-        # Reset and opening run concurrently on a prechecked full-jaw-envelope
-        # path. Never issue a prepared receipt if jaw opening ultimately fails.
-        return
-    if mode=='grasp_blocked':
-        assert result['status']=='stopped' and '未稳定到位' in result['reason']
-        assert abs(instances[0].q[ARMS['left'][3]]-10.)<=.35 # no lift/withdraw
+        # Timed opening completion records a position residual without blocking
+        # the reset; this is not physical evidence that the jaw fully opened.
+        assert result['status']=='prepared',result
+        opening=json.loads((tmp_path/'reset_gripper_result.json').read_text())
+        assert not opening['arrival_required'] and not opening['physical_result_verified']
+        assert opening['measured']['Joint_Right_Gripper']==17.
         return
     if mode.startswith('reset') or mode=='hold_reset':
         assert result['status']=='prepared',result
         assert abs(result['q']['Joint_Left_Gripper']-10)<=4 and abs(result['q']['Joint_Right_Gripper']-10)<=4
         assert abs(result['q'][NECK[1]]+20)<=1.
         assert result['token']
-        if mode=='reset_parallel':assert min(arm_started)<102 and now[0]>=102.35
+        if mode=='reset_parallel':assert min(arm_started)<102
     else:
         assert result['status']=='completed',result
-        assert result['q']['Joint_Left_Gripper']==(150 if mode=='grasp_contact' else 330)-(3 if handoff=='exit_settle' else 0)
+        assert result['q']['Joint_Left_Gripper']==(150 if mode=='grasp_contact' else 10 if mode=='grasp_blocked' else 330)-(3 if handoff=='exit_settle' else 0)
         held=json.loads((tmp_path/'held_object.json').read_text())
         assert held['q']==result['q'] and held['hold_feedback_confirmed']
         if handoff=='exit_settle':assert held['pre_hold_q']['Joint_Left_Gripper']-held['q']['Joint_Left_Gripper']==3.
@@ -249,6 +295,7 @@ def test_continuous_return_execution_keeps_closed_jaw(tmp_path,monkeypatch):
 
 def test_place_single_return_opens_once_after_lowering(tmp_path,monkeypatch):
     test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp_place_continuous')
+    assert not (tmp_path/'held_object.json').exists()
 
 
 @pytest.mark.parametrize('mode',['grasp_place','grasp_observe'])
@@ -261,5 +308,61 @@ def test_grasp_receipt_uses_post_sync_settled_feedback(tmp_path,monkeypatch):
     test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp_contact','exit_settle')
 
 
-def test_placed_return_mints_fresh_preparation_receipt(tmp_path,monkeypatch):
+def test_placed_return_preserves_preparation_receipt_without_extra_reset(tmp_path,monkeypatch):
     test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp_place_ready')
+
+
+@pytest.mark.parametrize('stage',['hold','sync_close','lock','destroy_node','base_close','ros_shutdown','held_receipt','prepare_receipt'])
+def test_cleanup_fault_never_skips_terminal_receipt_or_remaining_release(tmp_path,monkeypatch,stage):
+    mode='grasp_place' if stage=='base_close' else 'hold_reset' if stage=='prepare_receipt' else 'grasp'
+    test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,cleanup_fault=stage)
+
+
+def test_expired_plan_receipt_can_request_replanning_before_any_dispatch(tmp_path,monkeypatch):
+    test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp_expired')
+
+
+def test_cleanup_failure_revokes_otherwise_safe_preflight_retry(tmp_path,monkeypatch):
+    test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp_expired',cleanup_fault='ros_shutdown')
+
+
+def test_missing_execution_receipt_does_not_erase_confirmed_hold_evidence(tmp_path,monkeypatch):
+    with pytest.raises(FileNotFoundError):
+        test_execution_finishes_without_stop(tmp_path,monkeypatch,'grasp',cleanup_fault='execution_receipt')
+    held=json.loads((tmp_path/'held_object.json').read_text())
+    assert held['execution_id']=='current-attempt' and held['status']=='completed'
+    assert held['hold_feedback_confirmed'] and not held['grip_success_verified']
+
+
+@pytest.mark.parametrize('kind,confirmed',[('prepare',False)])
+def test_existing_hold_rejects_new_grasp_or_unconfirmed_reset_before_hardware(tmp_path,monkeypatch,kind,confirmed):
+    original=b'{"status":"uncertain","plan_id":"old-grasp","raw":"preserve exactly"}\n'
+    (tmp_path/'held_object.json').write_bytes(original)
+    path=tmp_path/'rejected_plan.json'
+    path.write_text(json.dumps(dict(kind=kind,config={},created_monotonic=0)))
+    def forbidden(*args,**kwargs):pytest.fail('Held-object rejection must precede ROS/controller creation')
+    monkeypatch.setattr(e,'CalibrationBridge',forbidden)
+    monkeypatch.setattr(e.rclpy,'init',forbidden)
+    monkeypatch.setattr(e.rclpy,'ok',lambda:False)
+    e.main(['--plan',str(path),'--run',str(tmp_path),'--execution-id','held-boundary']+
+           (['--operator-confirmed-empty-grippers'] if confirmed else []))
+    result=json.loads((tmp_path/'execution_result.json').read_text())
+    assert result['status']=='stopped' and result['reason_code']=='HELD_OBJECT_PRESENT'
+    assert result['effects']==[] and result['effect_certainty']=='not_dispatched' and not result['safe_to_retry']
+    assert (tmp_path/'held_object.json').read_bytes()==original and not (tmp_path/'held_history').exists()
+
+
+@pytest.mark.parametrize('mode',['hold_reset','unchecked_reset'])
+def test_confirmed_manual_reset_archives_exact_evidence_only_after_preflight(tmp_path,monkeypatch,mode):
+    original=b'{"status":"completed","plan_id":"previous","q":{"Joint_Left_Gripper":181}}\n'
+    (tmp_path/'held_object.json').write_bytes(original)
+    test_execution_finishes_without_stop(tmp_path,monkeypatch,mode,operator_confirmed_empty=True)
+    result=json.loads((tmp_path/'execution_result.json').read_text())
+    if mode=='unchecked_reset':
+        assert (tmp_path/'held_object.json').read_bytes()==original
+        assert not (tmp_path/'held_history').exists() and result['effects']==[]
+    else:
+        assert not (tmp_path/'held_object.json').exists()
+        history=list((tmp_path/'held_history').iterdir())
+        assert len(history)==1 and history[0].read_bytes()==original
+        assert result['held_receipt_archived_after_empty_gripper_confirmation'] is True

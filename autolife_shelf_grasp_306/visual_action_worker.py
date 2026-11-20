@@ -5,6 +5,7 @@ import cv2
 from .visual_reference import ReferenceStore,matrix,record_bindings,corrected_tcp,clone_without_bindings
 from .visual_registration import features,register,register_views,validate_surface
 from .pose_geometry import ModelGeometry
+from .visual_model import check_reference_model
 
 
 class VisualActions:
@@ -201,7 +202,7 @@ class VisualActions:
             arrays=dict(**f,image=frame['image'],depth=frame['depth'],mask=item['mask'],cloud=cloud,K=frame['K'],D=frame['D'])
             if action=='visual_add_view':
                 ident=cmd['reference'];original,_=self.store.load(ident)
-                if original['model_sha256']!=self.model_hash():raise ValueError('本机模型变化，请重新记录')
+                check_reference_model(original,self.geometry)
                 self.check_mount(original,q,T)
                 from .visual_multiview import prepare_view,resolve_views
                 meta,arrays=prepare_view(original,resolve_views(self.store.views(ident)),meta,arrays)
@@ -236,7 +237,7 @@ class VisualActions:
         current=None;observations={};diagnostics=[]
         for ident in dict.fromkeys(v['reference'] for v in bindings.values()):
             self.cancelled(cmd);meta,arrays=self.store.load(ident)
-            if meta['model_sha256']!=self.model_hash() or meta['frame']!=self.geometry.root:raise ValueError('本机模型或坐标系改变，请重新示教物体参照')
+            check_reference_model(meta,self.geometry)
             self.check_mount(meta,source,T)
             position_only=all(v['mode']=='position' for v in bindings.values() if v['reference']==ident)
             delta,stats,_,_,_=self.observe(ident,frame,T,current,position_only=position_only);old=matrix(meta['object_pose']);new=delta@old

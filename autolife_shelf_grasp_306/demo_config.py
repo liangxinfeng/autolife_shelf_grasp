@@ -42,9 +42,9 @@ def require_placeable(product):
     if not all(math.isfinite(v) for v in (w,h,d)) or not (.015<=w<=(.35 if directional else .09) and (0<h<=.4 if product.get('geometry')=='solid' else .025<=h<=.4)):
         raise ValueError('物品几何尺寸不足以安全规划放置')
     if shape not in ('solid','cylinder') or (shape=='solid' and not .005<=d<=(.35 if directional else .15)):
-        raise ValueError('当前自动放置支持瓶罐及尺寸可靠的硬质物品，暂不支持柔性袋体')
+        raise ValueError('放置需要物体支撑尺寸，当前记录只有夹取边缘或缺少有效包络')
     source_ok=product.get('dimension_source')=='multi_frame_rgbd' or measured_partial_bottom(product)
-    if product.get('temporary') and (not source_ok or product.get('dimension_frames',0)<5):
+    if product.get('temporary') and (not source_ok or product.get('dimension_frames',0)<1):
         raise ValueError('未录入物品缺少本轮多帧尺寸记录，不能自动放置')
 
 
@@ -52,11 +52,12 @@ def measured_partial_bottom(product):
     """局部瓶身也可以放置，但瓶底必须来自本轮多帧实测，不能拿未知的整瓶高度猜瓶底。"""
     return bool(product.get('geometry')=='cylinder' and product.get('partial_geometry') is True
         and product.get('dimension_source')=='partial_current_rgbd'
-        and product.get('dimension_frames',0)>=5 and product.get('placement_bottom_observed') is True)
+        and product.get('dimension_frames',0)>=1 and product.get('placement_bottom_observed') is True)
 
 
 def require_placement_bottom(grasp):
-    if grasp.get('geometry',{}).get('image_cropped') and not measured_partial_bottom(grasp['product']):
+    geometry=grasp.get('geometry',{})
+    if geometry.get('placement_bottom_observed') is False or (geometry.get('image_cropped') and not measured_partial_bottom(grasp['product'])):
         raise ValueError('当前可见瓶身可以抓取，但瓶底尚未被观测，无法确定放置高度；请先露出瓶底')
 
 

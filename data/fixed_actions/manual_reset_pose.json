@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "robot_id": 367,
+  "urdf_sha256": "a50ff4309facee30e5cf887d4e3e694aca27161aa9e6616da0e4f2af5bb5e85b",
+  "joints_deg": {
+    "Joint_Neck_Roll": -0.12021133303642273,
+    "Joint_Neck_Pitch": 29.976825714111328,
+    "Joint_Neck_Yaw": 0.010928303003311157,
+    "Joint_Left_Shoulder_Inner": 43.68780517578125,
+    "Joint_Left_Shoulder_Outer": -0.9063720703125,
+    "Joint_Left_UpperArm": 0.9118576049804688,
+    "Joint_Left_Elbow": -121.80369567871094,
+    "Joint_Left_Forearm": -0.2513509690761566,
+    "Joint_Left_Wrist_Upper": -1.1911849975585938,
+    "Joint_Left_Wrist_Lower": -12.360074043273926,
+    "Joint_Right_Shoulder_Inner": 43.68780517578125,
+    "Joint_Right_Shoulder_Outer": 0.9118804931640625,
+    "Joint_Right_UpperArm": -0.9118576049804688,
+    "Joint_Right_Elbow": -121.80369567871094,
+    "Joint_Right_Forearm": 0.2294943630695343,
+    "Joint_Right_Wrist_Upper": 1.2130416631698608,
+    "Joint_Right_Wrist_Lower": -12.360074043273926,
+    "Joint_Ankle": -27.142940521240234,
+    "Joint_Knee": -55.3575325012207,
+    "Joint_Waist_Pitch": -28.929590225219727,
+    "Joint_Waist_Yaw": -0.005356969777494669,
+    "Joint_Left_Gripper": 10.0,
+    "Joint_Right_Gripper": 10.0
+  },
+  "saved_at": 1795016433.9248624,
+  "reference": {
+    "source": "shared pose execution profile",
+    "pose_name": "抓取复位",
+    "migration_source": {
+      "robot_id": 345,
+      "urdf_sha256": "dd0315fd48cb0d3ba7a866399570ab1d600779823c916184d2b216a0017674b1",
+      "saved_at": 1793956652.2511315,
+      "original_file": "/home/ubuntu/migration367_20261118/reset_camera_backup_20261118/manual_reset_pose.json"
+    }
+  }
+}

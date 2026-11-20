@@ -1,11 +1,11 @@
 """当前全身姿态下的抓取关键位姿预判；仅计算，不发布控制命令。
 
 与正式规划共用指尖、倾角、桌面和腰臂限位。关键点通过不等于整条路径
-通过；求解超时也不等于物理不可达。所有尝试计入同一个10秒预算。
+通过；求解超时也不等于物理不可达。所有尝试计入本次配置的原地总预算。
 """
 import time
 import numpy as np
-from .planning_control import PlanningControl,PlanningTimeout
+from .planning_control import PlanningControl,PlanningTimeout,VENDOR_IK_POSITION_TOLERANCE_M
 from .low_object_grasp import grasp_scope,enabled,support
 
 
@@ -21,8 +21,9 @@ def slice_control(parent,seconds,on_status):
         return False
     def status(text):
         # 界面显示整次原地预算的累计时间，不在换手时看起来重新计时。
-        on_status(text.split(' · 已用')[0]+f' · 原地累计{parent.clock()-parent.started:.1f}/10秒')
-    return PlanningControl(stopped,status,timeout_sec=max(.001,min(seconds,parent.deadline-parent.clock())))
+        on_status(text.split(' · 已用')[0]+f' · 原地累计{parent.clock()-parent.started:.1f}/{parent.timeout_sec:g}秒')
+    return PlanningControl(stopped,status,timeout_sec=max(.001,min(seconds,parent.deadline-parent.clock())),
+                           clock=parent.clock,budget_name='本阶段规划')
 
 
 def model_probe(planner):
@@ -58,11 +59,11 @@ def model_probe(planner):
     return probe
 
 
-def native_key_poses(planner,source,tcp,center,product):
+def native_key_poses(planner,source,tcp,center,product,source_ready=False):
     """停靠和原地预判使用正式原厂逆解，避免数值预判可达、正式逆解却失败。"""
     old=getattr(planner,'_reach_quick_probe',False)
     planner._reach_quick_probe=True
-    try:return check_key_poses(planner,source,tcp,center,product)
+    try:return check_key_poses(planner,source,tcp,center,product,source_ready)
     finally:planner._reach_quick_probe=old
 
 
@@ -72,12 +73,21 @@ def broad_margin(pool,source,tcp,center,product,config):
     from .gripper_contact_geometry import contact_tcp
     from types import SimpleNamespace
     longest=np.asarray(tcp)
-    extra=0.
+    extra=VENDOR_IK_POSITION_TOLERANCE_M
     if enabled(product,config):
-        longest=contact_tcp(SimpleNamespace(cfg=config),tcp,.90)
+        gripper=SimpleNamespace(cfg=config)
+        offset=np.asarray(product.get('object_center_offset_wrist',[0.,0.,0.]))
+        # Contact depth varies linearly with finger fraction. Its maximum norm
+        # over the whole interval is attained at an endpoint, for any tool mount.
+        longest=max((contact_tcp(gripper,longest-offset,f)+offset for f in (.5,.9)),key=np.linalg.norm)
         extra+=float(product['height_m'])/2  # 允许物体内上移接触点。
     if 'measured_footprint_torso' in product:
-        extra+=float(np.linalg.norm(product['bbox_extents_m'])/2) if 'bbox_extents_m' in product else max(float(product.get(k,0)) for k in ('diameter_m','height_m','depth_m'))
+        # The measured hull may be asymmetric around its trimmed box centre.
+        # Include all local lateral offsets, the maximum fingertip insertion
+        # search, and the full measured height for tilted contact prisms.
+        from .local_contact import prism,MAX_CONTACT_OFFSET_M
+        hull,_=prism(product)
+        extra+=np.hypot(MAX_CONTACT_OFFSET_M,np.linalg.norm(hull,axis=1).max())
     return current_margin(pool.fk,source,longest,config['arm'],config,center)+extra
 
 
@@ -117,14 +127,14 @@ def orientation_envelope(planner,source,tcp,center,product,yaws):
 
 
 @grasp_scope
-def check_key_poses(planner,source,tcp,center,product):
+def check_key_poses(planner,source,tcp,center,product,source_ready=False):
     import copy
-    from .object_extent import directional_yaws
+    from .object_extent import coarse_yaws,directional_yaws
     from .planning import IKFailure,CollisionFailure
     from .grasp_candidate_hint import request_key,joint_transit
     planner._reach_candidate_hint=None
     planner.bounded_seed_recoveries=0;planner._attitude_cache={}
-    planner.configure_source(source)
+    if not source_ready:planner.configure_source(source)
     planner.guard.begin_fixed_neck(source)
     if enabled(product,planner.cfg):product=support(product,center,planner.cfg['up_torso'])
     # A reachable endpoint cannot repair an already colliding crouched source.
@@ -134,9 +144,8 @@ def check_key_poses(planner,source,tcp,center,product):
     key=request_key(source,tcp,center,product,planner.cfg)
     yaws=list(directional_yaws(product,planner.cfg)) if 'bbox_axes_torso' in product else [0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.]
     preferred=getattr(planner,'preferred_grasp_yaw',None)
-    if preferred is not None and np.isfinite(preferred) and -90<=preferred<=90:
-        yaws=[float(preferred)]+[y for y in yaws if abs(y-preferred)>1e-6]
-    # 初筛不展开上百个朝向/细网格；未收敛只表示需要更好的操作点。
+    yaws=list(dict.fromkeys(coarse_yaws(yaws,(preferred,))+yaws))
+    # 初筛使用稀疏朝向；未收敛交给当前停靠位置的完整路径搜索。
     if not getattr(planner,'_reach_quick_probe',False):
         outside=orientation_envelope(planner,source,tcp,center,product,yaws)
         if outside is not None:return outside
@@ -176,6 +185,7 @@ def check_key_poses(planner,source,tcp,center,product):
 
 def screen(pool,source,point,product,cfg,order,parent,on_status,observation,hint=None):
     from .core import corrected_target
+    from .vendor_ik_process import VendorSolverExited
     rows=[];screen_used=0.
     for i,side in enumerate(order):
         remaining=SCREEN_SECONDS-screen_used
@@ -189,26 +199,36 @@ def screen(pool,source,point,product,cfg,order,parent,on_status,observation,hint
             if distance_margin<0:
                 row=dict(status='outside_workspace',reason='当前腰臂完整外包络仍无法覆盖物体接触区域',best_margin_m=round(distance_margin,6))
             else:
-                # 配置、包络与模型冷加载计入整次10秒；短时逆解额度只累计实际预判，
+                # 配置、包络与模型冷加载计入整次总预算；短时逆解额度只累计实际预判，
                 # 避免首次加载吞掉额度而把同一可达位置错误地推荐再次移位。
                 planner=pool.native_planner(config,parent)
                 planner._reach_candidate_hint=None
                 planner.configure_source(source)
                 parent.checkpoint()
                 remaining=SCREEN_SECONDS-screen_used
-                child=slice_control(parent,max(.001,remaining),on_status)
+                child=slice_control(parent,max(.001,remaining/(len(order)-i)),on_status)
                 planner.context=child
                 child.set_stage('可抓范围：接触、预抓和抬离位姿',arm=side)
+                if hasattr(getattr(pool,'fk',None),'joints'):
+                    from .mobile_reach import arm_envelope
+                    shoulder,_=arm_envelope(pool.fk,source,tcp,side)
+                    delta=center-shoulder
+                    angle=np.rad2deg(np.arctan2(delta[1],delta[0]))-config.get('approach_yaw_deg',0.)
+                    planner.preferred_grasp_yaw=min((0.,-10.,10.,-20.,20.,-35.,35.,-50.,50.,-60.,60.),
+                                                    key=lambda yaw:abs((yaw-angle+180)%360-180))
                 if hint and hint.get('arm')==side:planner.preferred_grasp_yaw=hint.get('yaw_offset_deg')
                 probe_started=time.monotonic()
-                row=native_key_poses(planner,source,tcp,center,obj)
+                row=native_key_poses(planner,source,tcp,center,obj,True)
+                if row['status']=='unresolved' and row.get('failures'):row['key_pose_miss']=True
         except PlanningTimeout as exc:
             parent.checkpoint()  # 总预算耗尽时退出，不把它变成可继续的子超时。
-            row=dict(status='unresolved',reason=str(exc))
-        except ValueError as exc:
+            row=dict(status='unresolved',reason=str(exc),key_pose_budget_used=probe_started is not None)
+        except VendorSolverExited as exc:
+            row=dict(status='unresolved',reason=str(exc),solver_exit=exc.details)
+        except (ValueError,OSError) as exc:
             row=dict(status='unresolved',reason=str(exc))
         finally:
             if probe_started is not None:screen_used+=time.monotonic()-probe_started
         rows.append(dict(arm=side,seconds=round(time.monotonic()-begin,3),**row))
-        if row['status']=='key_poses_passed':break
+        if row['status']=='key_poses_passed' or 'solver_exit' in row:break
     return rows

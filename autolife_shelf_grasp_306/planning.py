@@ -6,6 +6,7 @@ claimed to have been checked.
 """
 import time
 import numpy as np
+from .auto_grasp import StationaryPathsExhausted
 from .low_object_grasp import grasp_scope
 import pinocchio as pin
 from scipy.optimize import least_squares
@@ -15,7 +16,7 @@ from autolife_handeye_calibration_306.verification_core import wrist_frame
 from .grasp_collision import CollisionGuard
 from autolife_handeye_calibration_306.verification_trajectory import JointPath
 from control_center_joint_control.joint_definitions import GROUPS
-from .core import stages
+from .core import stages,unit
 from .bottle import horizontal_basis
 from .motion import configure_grasp_path,configure_reset_path
 from .joint_limits import load_arm_policy,check_pose
@@ -54,10 +55,12 @@ def withdrawal_freedom(distance):
 
 class Planner:
     guard_factory=CollisionGuard
-    def __init__(self,cfg):
-        from .grip_width import calibrated_max_width
+    def __init__(self,cfg,*,for_reset=False):
         cfg=dict(cfg)
-        cfg['gripper_max_width_m']=calibrated_max_width(cfg)
+        # 复位直接执行已保存的关节/夹爪位置量，不进行物体宽度换算。
+        if not for_reset:
+            from .grip_width import calibrated_max_width
+            cfg['gripper_max_width_m']=calibrated_max_width(cfg)
         self.cfg=cfg;self.fk=Kinematics(cfg['urdf_path'])
         # 普通抓取无标定板，仅使用机器人的真实碰撞模型。
         self.guard=self.guard_factory(cfg)
@@ -243,6 +246,14 @@ class Planner:
                 center=center-(torso_rotation@np.asarray(self.cfg['up_torso']))*product['height_m']*.5
                 radius+=.015 # allowance for a soft bag; not a swinging-body model
             bottle=fcl.Sphere(radius);transform=fcl.Transform3f(np.eye(3),center)
+            if product.get('carried_shape')=='measured_cylinder' and 'cylinder_axis_wrist' in product:
+                axis=wrist.rotation@unit(product['cylinder_axis_wrist'])
+                radial=product['diameter_m']/2+.005
+                half=collision_height/2+.005
+                x,y,z=horizontal_basis(axis,np.pi/2 if abs(axis[0])>.9 else 0.)
+                bottle=fcl.Cylinder(radial,2*half)
+                transform=fcl.Transform3f(np.column_stack((x,y,z)),center)
+                radius=float(np.hypot(radial,half))
             from .held_broadphase import nearby_geometries
             for i in nearby_geometries(self.guard,center,radius+.005):
                 obj=kin.geom_model.geometryObjects[i];t=kin.geom_data.oMg[i]
@@ -264,12 +275,20 @@ class Planner:
             if not yaws:return self._local_contact_plan(source,tcp,center,product,started)
         if self.cfg.get('fixed_carry_enabled',False) and self.has_common_carry_target():
             # A bad common endpoint cannot be repaired by searching grasp yaws.
-            self.check(self.carry_target(source),tcp,True,product)
-        for yaw_offset,flexible,profile in self.candidates(yaws):
-            # These alternatives only change the pregrasp. If the direct route
-            # already reached it and failed later, prioritize another direction
-            # over five near-identical replays of the same carry endpoint.
-            if (yaw_offset,flexible) in late_failures and not profile.startswith('joint_'):continue
+            # The precise cylinder orientation is known at contact. Its endpoint
+            # and every intervening state are checked with the attached shape.
+            self.check(self.carry_target(source),tcp,product.get('carried_shape')!='measured_cylinder',product)
+        def ordered_candidates():
+            deferred=[]
+            for candidate in self.candidates(yaws):
+                yaw,flexible,profile=candidate
+                if (yaw,flexible) in late_failures and not profile.startswith('joint_'):
+                    deferred.append(candidate)
+                else:yield candidate
+            # A distinct pregrasp can enter a different IK branch later.
+            yield from deferred
+
+        for yaw_offset,flexible,profile in ordered_candidates():
             self._candidate_stage=0
             try:
                 plan=self._route(source,tcp,center,product,flexible,started,yaw_offset,profile)
@@ -287,7 +306,7 @@ class Planner:
             plan['candidate_failures']=failures+plan.get('candidate_failures',[])
             plan['contact_fallback_reason']='center_paths_exhausted'
             return plan
-        raise ValueError('多方向路径均未通过：'+failure_summary(failures)+'；请调整物品与机器人的相对位置后重新预览')
+        raise StationaryPathsExhausted('多方向路径均未通过：'+failure_summary(failures))
 
     def _local_contact_plan(self,source,tcp,center,product,started):
         from .local_contact import candidates
@@ -334,7 +353,7 @@ class Planner:
                     failure=dict(yaw_offset_deg=yaw,pregrasp_profile=profile,
                                  stage_index=self._candidate_stage,reason=str(exc),contact_mode='front_local')
                     failures.append(failure);self.candidate_failures.append(failure)
-        raise ValueError('前端局部开度已通过，但完整路径未通过：'+failure_summary(failures))
+        raise StationaryPathsExhausted('前端局部开度已通过，但完整路径未通过：'+failure_summary(failures))
 
     def _carry_segment(self,source,tcp,product,grasp_rotation,started,clearance_waypoints=None):
         if clearance_waypoints is not None:
@@ -469,11 +488,15 @@ class Planner:
             posture=np.deg2rad([source[n] for n in self.names])
             posture[getattr(self,'arm_bias_index',1)]+=np.deg2rad(20. if profile=='elbow_positive' else -20.)
             posture=np.clip(posture,*self.bounds)
-        if np.linalg.norm(st[0][1]-p0)>.65:raise ValueError('预抓取点距所选夹爪超过65cm，请先调整起始姿态')
+        if not profile.startswith('joint_') and np.linalg.norm(st[0][1]-p0)>.65:
+            raise IKFailure('直线接近距离过长，改查其他进场路径')
         route=[];pending_checks=[];checked=0;nominal=desired.copy();max_deviation=0.
         max_grasp_deviation=0.;max_withdraw_tilt=0.
         for index,(label,endpoint) in enumerate(st):
             self._candidate_stage=index
+            if index==2 and product.get('carried_shape')=='measured_cylinder':
+                contact_rotation=self.pose(previous,tcp)[1]
+                product={**product,'cylinder_axis_wrist':(contact_rotation.T@up).tolist()}
             if time.monotonic()-started>45:raise ValueError('规划超时，请调整物体位置后重试')
             if index==0 and profile.startswith('joint_'):
                 # A straight TCP line from folded reset may hit the torso even
@@ -540,7 +563,10 @@ class Planner:
                           'max_speed_deg_s':min(path.max_speed,cfg['max_joint_speed_deg_s'])})
             # After grasp, anchor orientation there (at most 5deg compliance in
             # flexible mode), never straighten the bottle toward nominal again.
-            if index==1:desired=self.pose(previous,tcp)[1]
+            if index==1:
+                desired=self.pose(previous,tcp)[1]
+                if getattr(getattr(self,'context',None),'finish_budget',None):
+                    self.context.finish_validated_approach()
         # Do dense interpolation checks only after the Cartesian IK stages succeed.
         # Nothing is executable until EVERY check below has passed. Failed
         # carry endpoints no longer waste dense checks of the preceding stages.

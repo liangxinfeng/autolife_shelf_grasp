@@ -292,7 +292,7 @@ class TeachingComposer(TeachingControls,Q.QWidget):
         self.guard(work)
     def copy_address(self):
         # Robot addresses are read from the same configuration, not a browser launch.
-        address=self.studio.cfg.get('teaching_vr_url','https://192.168.8.176:8445/')
+        address=self.studio.cfg.get('teaching_vr_url','https://10.10.2.45:8445/')
         Q.QApplication.clipboard().setText(address);self.message('已复制：'+address)
     def update_runtime(self):
         runtime=self.studio.runtime;self.runtime_status.setText(runtime.message);data=runtime.data or {};state=data.get('teleop',{})

@@ -65,10 +65,10 @@ sent=[]
 window.send=lambda action,**kw:sent.append((action,kw))
 question=Q.QMessageBox.question
 Q.QMessageBox.question=lambda *a,**kw:Q.QMessageBox.No
-window.catalog_dialog.remove_product();window.prepare_robot();assert not sent
+window.catalog_dialog.remove_product();assert not sent
 Q.QMessageBox.question=lambda *a,**kw:Q.QMessageBox.Yes
-window.catalog_dialog.remove_product();window.prepare_robot()
-assert sent==[('remove_product',{'product_id':'gum'}),('prepare',{})]
+window.catalog_dialog.remove_product();window.prepare.click()
+assert sent==[('remove_product',{'product_id':'gum'}),('scan',{})]
 Q.QMessageBox.question=question
 window.receive_event({'event':'catalog','products':[],'items':[]})
 assert window.catalog_dialog.current() is None and not window.execute.isEnabled()

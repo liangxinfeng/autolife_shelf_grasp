@@ -1,0 +1,1680 @@
+version: 1
+actions:
+  轨迹_1:
+    saved_at: '2026-11-02T10:49:58+08:00'
+    groups:
+    - neck
+    - left_arm
+    - right_arm
+    - leg_waist
+    - grippers
+    loop_count: 1
+    speed_percent: 100
+    keyframes:
+    - transition_sec: 0.6
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.010928303003311157
+        Joint_Neck_Pitch: 0.16392454504966736
+        Joint_Neck_Yaw: 0.03278490900993347
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.010986328125
+        Joint_Left_UpperArm: -0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: 19.96246337890625
+        Joint_Right_Shoulder_Outer: 0.0054931640625
+        Joint_Right_UpperArm: -0.010982944630086422
+        Joint_Right_Elbow: -110.0045166015625
+        Joint_Right_Forearm: -0.010928303003311157
+        Joint_Right_Wrist_Upper: -0.010928303003311157
+        Joint_Right_Wrist_Lower: 0.010928303003311157
+        Joint_Ankle: 0.6586475372314453
+        Joint_Knee: 1.3470096588134766
+        Joint_Waist_Pitch: 0.7051678895950317
+        Joint_Waist_Yaw: -0.0008171648951247334
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 1.4037063930139255
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.12021133303642273
+        Joint_Neck_Yaw: 0.03278490900993347
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.010986328125
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: 3.3673553466796875
+        Joint_Right_Shoulder_Outer: -1.51611328125
+        Joint_Right_UpperArm: -0.45041000843048096
+        Joint_Right_Elbow: -102.9734115600586
+        Joint_Right_Forearm: 1.0381888151168823
+        Joint_Right_Wrist_Upper: -0.44806042313575745
+        Joint_Right_Wrist_Lower: 9.169010162353516
+        Joint_Ankle: 0.6598491668701172
+        Joint_Knee: 1.3373966217041016
+        Joint_Waist_Pitch: 0.7070292234420776
+        Joint_Waist_Yaw: -0.0008171648951247334
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 2.1608431935310364
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.12021133303642273
+        Joint_Neck_Yaw: 0.03278490900993347
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.010986328125
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: -40.452301025390625
+        Joint_Right_Shoulder_Outer: 2.6367645263671875
+        Joint_Right_UpperArm: -0.362546443939209
+        Joint_Right_Elbow: -56.875423431396484
+        Joint_Right_Forearm: 4.928773880004883
+        Joint_Right_Wrist_Upper: -2.721147298812866
+        Joint_Right_Wrist_Lower: 5.51890230178833
+        Joint_Ankle: 0.6697196960449219
+        Joint_Knee: 1.3290367126464844
+        Joint_Waist_Pitch: 0.7204216718673706
+        Joint_Waist_Yaw: -0.000771766877733171
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 0.7082128382148395
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.14206793904304504
+        Joint_Neck_Yaw: 0.03278490900993347
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.010986328125
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: -39.6173095703125
+        Joint_Right_Shoulder_Outer: 2.7301483154296875
+        Joint_Right_UpperArm: -0.2087305784225464
+        Joint_Right_Elbow: -59.0067138671875
+        Joint_Right_Forearm: 5.453332424163818
+        Joint_Right_Wrist_Upper: -1.431607723236084
+        Joint_Right_Wrist_Lower: 5.912321090698242
+        Joint_Ankle: 0.6698055267333984
+        Joint_Knee: 1.3288650512695312
+        Joint_Waist_Pitch: 0.7205578684806824
+        Joint_Waist_Yaw: -0.0007263688021339476
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 290.50277519226074
+    - transition_sec: 2.098016381263733
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.16392454504966736
+        Joint_Neck_Yaw: 0.207637757062912
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.0164794921875
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: -4.444091796875
+        Joint_Right_Shoulder_Outer: -12.689453125
+        Joint_Right_UpperArm: -5.548026084899902
+        Joint_Right_Elbow: -103.76439666748047
+        Joint_Right_Forearm: -25.015213012695312
+        Joint_Right_Wrist_Upper: 27.39769172668457
+        Joint_Right_Wrist_Lower: 20.337900161743164
+        Joint_Ankle: 0.6679000854492188
+        Joint_Knee: 1.3294143676757812
+        Joint_Waist_Pitch: 0.7196044921875
+        Joint_Waist_Yaw: -0.0003177863545715809
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 290.50277519226074
+    - transition_sec: 0.38771941317625824
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.14206793904304504
+        Joint_Neck_Yaw: 0.207637757062912
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.0164794921875
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.010928303003311157
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: -4.7462158203125
+        Joint_Right_Shoulder_Outer: -12.49169921875
+        Joint_Right_UpperArm: -5.526060104370117
+        Joint_Right_Elbow: -104.02804565429688
+        Joint_Right_Forearm: -24.66550636291504
+        Joint_Right_Wrist_Upper: 27.485118865966797
+        Joint_Right_Wrist_Lower: 20.490896224975586
+        Joint_Ankle: 0.6679000854492188
+        Joint_Knee: 1.3294315338134766
+        Joint_Waist_Pitch: 0.7196044921875
+        Joint_Waist_Yaw: -0.00027238830807618797
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 0.6057029169966114
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: 0.010928303003311157
+        Joint_Neck_Pitch: 0.14206793904304504
+        Joint_Neck_Yaw: 0.207637757062912
+        Joint_Left_Shoulder_Inner: 19.95697021484375
+        Joint_Left_Shoulder_Outer: 0.0164794921875
+        Joint_Left_UpperArm: 0.010982944630086422
+        Joint_Left_Elbow: -110.00457000732422
+        Joint_Left_Forearm: 0.03278490900993347
+        Joint_Left_Wrist_Upper: -0.010928303003311157
+        Joint_Left_Wrist_Lower: -0.010928303003311157
+        Joint_Right_Shoulder_Inner: -4.6693115234375
+        Joint_Right_Shoulder_Outer: -12.6290283203125
+        Joint_Right_UpperArm: -5.548026084899902
+        Joint_Right_Elbow: -104.81903839111328
+        Joint_Right_Forearm: -23.856813430786133
+        Joint_Right_Wrist_Upper: 26.151811599731445
+        Joint_Right_Wrist_Lower: 20.38161277770996
+        Joint_Ankle: 0.6679000854492188
+        Joint_Knee: 1.3294315338134766
+        Joint_Waist_Pitch: 0.7196044921875
+        Joint_Waist_Yaw: -0.0003177863545715809
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 10.0
+    trajectory:
+      sha256: 519d79e3c6858349cf0c6d3d0c851d3af6878af09949d1a9ea3325d26be3d449
+      indices:
+      - 0
+      - 122
+      - 218
+      - 244
+      - 355
+      - 366
+      - 473
+      speeds:
+      - 80.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      minimums:
+      - 0.6
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      timing: recorded
+  丢垃圾:
+    saved_at: '2026-11-02T14:57:16+08:00'
+    groups:
+    - neck
+    - left_arm
+    - right_arm
+    - leg_waist
+    - grippers
+    loop_count: 1
+    speed_percent: 100
+    keyframes:
+    - transition_sec: 0.6
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.430543899536133
+        Joint_Neck_Yaw: -2.240356683731079
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: 2.8125457763671875
+        Joint_Right_Shoulder_Outer: 3.49920654296875
+        Joint_Right_UpperArm: 3.438645124435425
+        Joint_Right_Elbow: -100.31477355957031
+        Joint_Right_Forearm: 6.699158668518066
+        Joint_Right_Wrist_Upper: 8.972246170043945
+        Joint_Right_Wrist_Lower: -12.228934288024902
+        Joint_Ankle: -35.046730041503906
+        Joint_Knee: -71.47631072998047
+        Joint_Waist_Pitch: -37.341529846191406
+        Joint_Waist_Yaw: -0.0011349512496963143
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 0.6441878782696452
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.45240020751953
+        Joint_Neck_Yaw: -2.240356683731079
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: 3.4772186279296875
+        Joint_Right_Shoulder_Outer: 3.64202880859375
+        Joint_Right_UpperArm: 3.6803791522979736
+        Joint_Right_Elbow: -101.91871643066406
+        Joint_Right_Forearm: 7.3985700607299805
+        Joint_Right_Wrist_Upper: 9.037816047668457
+        Joint_Right_Wrist_Lower: -11.857372283935547
+        Joint_Ankle: -35.04674530029297
+        Joint_Knee: -71.47631072998047
+        Joint_Waist_Pitch: -37.341575622558594
+        Joint_Waist_Yaw: -0.0011349512496963143
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 10.0
+    - transition_sec: 1.3694375929911846
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.16392454504966736
+        Joint_Neck_Pitch: 25.430543899536133
+        Joint_Neck_Yaw: -2.240356683731079
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: -11.27764892578125
+        Joint_Right_Shoulder_Outer: 2.7795867919921875
+        Joint_Right_UpperArm: 1.9665480852127075
+        Joint_Right_Elbow: -92.75626373291016
+        Joint_Right_Forearm: 22.807695388793945
+        Joint_Right_Wrist_Upper: 23.988006591796875
+        Joint_Right_Wrist_Lower: 1.759456753730774
+        Joint_Ankle: -35.04635238647461
+        Joint_Knee: -71.47636413574219
+        Joint_Waist_Pitch: -37.34121322631836
+        Joint_Waist_Yaw: -0.0011803492670878768
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 290.2732906341553
+    - transition_sec: 3.195947080850601
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.45240020751953
+        Joint_Neck_Yaw: -2.2622132301330566
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: -43.58892822265625
+        Joint_Right_Shoulder_Outer: 7.5367431640625
+        Joint_Right_UpperArm: -5.218428611755371
+        Joint_Right_Elbow: -24.576059341430664
+        Joint_Right_Forearm: 38.21687698364258
+        Joint_Right_Wrist_Upper: 7.31114387512207
+        Joint_Right_Wrist_Lower: -8.709966659545898
+        Joint_Ankle: -35.05352783203125
+        Joint_Knee: -71.47579956054688
+        Joint_Waist_Pitch: -37.34016799926758
+        Joint_Waist_Yaw: -0.001316543435677886
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 290.57927894592285
+    - transition_sec: 1.2942424971788515
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.45240020751953
+        Joint_Neck_Yaw: -2.3277831077575684
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: -37.628753662109375
+        Joint_Right_Shoulder_Outer: 6.7841644287109375
+        Joint_Right_UpperArm: -0.6701235175132751
+        Joint_Right_Elbow: -37.58369064331055
+        Joint_Right_Forearm: 38.21687698364258
+        Joint_Right_Wrist_Upper: 10.152557373046875
+        Joint_Right_Wrist_Lower: -5.234766483306885
+        Joint_Ankle: -35.06116485595703
+        Joint_Knee: -71.4687271118164
+        Joint_Waist_Pitch: -37.347023010253906
+        Joint_Waist_Yaw: -0.0011349512496963143
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 124.11688423156738
+    - transition_sec: 3.503902494907379
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.45240020751953
+        Joint_Neck_Yaw: -2.39335298538208
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: 6.015106201171875
+        Joint_Right_Shoulder_Outer: 7.3389739990234375
+        Joint_Right_UpperArm: 5.372244358062744
+        Joint_Right_Elbow: -112.33361053466797
+        Joint_Right_Forearm: 12.032225608825684
+        Joint_Right_Wrist_Upper: 5.9997477531433105
+        Joint_Right_Wrist_Lower: 2.91796612739563
+        Joint_Ankle: -35.04513168334961
+        Joint_Knee: -71.47457885742188
+        Joint_Waist_Pitch: -37.34089279174805
+        Joint_Waist_Yaw: -0.0011349512496963143
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 12.886895179748535
+    - transition_sec: 0.2
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 25.45240020751953
+        Joint_Neck_Yaw: -2.39335298538208
+        Joint_Left_Shoulder_Inner: 0.46142578125
+        Joint_Left_Shoulder_Outer: 3.88372802734375
+        Joint_Left_UpperArm: 2.8014705181121826
+        Joint_Left_Elbow: -98.60093688964844
+        Joint_Left_Forearm: 1.890650987625122
+        Joint_Left_Wrist_Upper: -13.955606460571289
+        Joint_Left_Wrist_Lower: -11.682519912719727
+        Joint_Right_Shoulder_Inner: 6.015106201171875
+        Joint_Right_Shoulder_Outer: 7.3389739990234375
+        Joint_Right_UpperArm: 5.372244358062744
+        Joint_Right_Elbow: -112.33361053466797
+        Joint_Right_Forearm: 12.032225608825684
+        Joint_Right_Wrist_Upper: 5.977890968322754
+        Joint_Right_Wrist_Lower: 2.91796612739563
+        Joint_Ankle: -35.04513168334961
+        Joint_Knee: -71.47457885742188
+        Joint_Waist_Pitch: -37.3409423828125
+        Joint_Waist_Yaw: -0.0011349512496963143
+        Joint_Left_Gripper: 11.43305516242981
+        Joint_Right_Gripper: 12.886895179748535
+    trajectory:
+      sha256: c4c5256d0fa183c838b393a97bc37f231e16c0778d7bfab2829b8113ed7baffe
+      indices:
+      - 0
+      - 41
+      - 122
+      - 213
+      - 245
+      - 367
+      - 390
+      speeds:
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      - 100.0
+      minimums:
+      - 0.6
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      - 0.2
+      timing: recorded
+  丢垃圾全程:
+    saved_at: '2026-11-12T09:46:16+08:00'
+    groups:
+    - neck
+    - left_arm
+    - right_arm
+    - leg_waist
+    - grippers
+    loop_count: 1
+    speed_percent: 100
+    keyframes:
+    - transition_sec: 0.6
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.12021133303642273
+        Joint_Neck_Pitch: 29.95496940612793
+        Joint_Neck_Yaw: 0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.67132568359375
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: 43.67132568359375
+        Joint_Right_Shoulder_Outer: 0.9173736572265625
+        Joint_Right_UpperArm: -0.9118576049804688
+        Joint_Right_Elbow: -121.80369567871094
+        Joint_Right_Forearm: 0.2513509690761566
+        Joint_Right_Wrist_Upper: 1.2348982095718384
+        Joint_Right_Wrist_Lower: -12.360074043273926
+        Joint_Ankle: -40.714027404785156
+        Joint_Knee: -83.03286743164062
+        Joint_Waist_Pitch: -43.396949768066406
+        Joint_Waist_Yaw: 0.042356379330158234
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 275.7382583618164
+    - transition_sec: 5.28518334031105
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 29.93311309814453
+        Joint_Neck_Yaw: -0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.66033935546875
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: -30.9874267578125
+        Joint_Right_Shoulder_Outer: -29.608612060546875
+        Joint_Right_UpperArm: 29.08037757873535
+        Joint_Right_Elbow: -112.92684936523438
+        Joint_Right_Forearm: 6.240170001983643
+        Joint_Right_Wrist_Upper: 56.53298568725586
+        Joint_Right_Wrist_Lower: 66.5653305053711
+        Joint_Ankle: -40.713993072509766
+        Joint_Knee: -83.03327941894531
+        Joint_Waist_Pitch: -43.39712905883789
+        Joint_Waist_Yaw: 0.04240177944302559
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 275.8147621154785
+    - transition_sec: 3.3797177246638705
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 29.93311309814453
+        Joint_Neck_Yaw: -0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.66033935546875
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: -53.119720458984375
+        Joint_Right_Shoulder_Outer: -13.83203125
+        Joint_Right_UpperArm: 40.0885124206543
+        Joint_Right_Elbow: -62.456398010253906
+        Joint_Right_Forearm: 44.817626953125
+        Joint_Right_Wrist_Upper: 49.66990280151367
+        Joint_Right_Wrist_Lower: 29.867488861083984
+        Joint_Ankle: -40.71384048461914
+        Joint_Knee: -83.03340148925781
+        Joint_Waist_Pitch: -43.397178649902344
+        Joint_Waist_Yaw: 0.042356379330158234
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 275.8147621154785
+    - transition_sec: 0.6
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 29.93311309814453
+        Joint_Neck_Yaw: -0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.66033935546875
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: -53.119720458984375
+        Joint_Right_Shoulder_Outer: -13.83203125
+        Joint_Right_UpperArm: 40.110477447509766
+        Joint_Right_Elbow: -62.456398010253906
+        Joint_Right_Forearm: 44.817626953125
+        Joint_Right_Wrist_Upper: 49.66990280151367
+        Joint_Right_Wrist_Lower: 29.867488861083984
+        Joint_Ankle: -40.71384048461914
+        Joint_Knee: -83.03340148925781
+        Joint_Waist_Pitch: -43.39712905883789
+        Joint_Waist_Yaw: 0.042356379330158234
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 108.97777777777779
+    - transition_sec: 3.3797177246638705
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.18578115105628967
+        Joint_Neck_Pitch: 29.93311309814453
+        Joint_Neck_Yaw: -0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.66033935546875
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: -30.9874267578125
+        Joint_Right_Shoulder_Outer: -29.608612060546875
+        Joint_Right_UpperArm: 29.08037757873535
+        Joint_Right_Elbow: -112.92684936523438
+        Joint_Right_Forearm: 6.240170001983643
+        Joint_Right_Wrist_Upper: 56.53298568725586
+        Joint_Right_Wrist_Lower: 66.5653305053711
+        Joint_Ankle: -40.713993072509766
+        Joint_Knee: -83.03327941894531
+        Joint_Waist_Pitch: -43.39712905883789
+        Joint_Waist_Yaw: 0.04240177944302559
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 275.8147621154785
+    - transition_sec: 5.28518334031105
+      hold_sec: 0.0
+      easing: smooth
+      joints_deg:
+        Joint_Neck_Roll: -0.12021133303642273
+        Joint_Neck_Pitch: 29.95496940612793
+        Joint_Neck_Yaw: 0.010928303003311157
+        Joint_Left_Shoulder_Inner: 43.67132568359375
+        Joint_Left_Shoulder_Outer: -0.9063720703125
+        Joint_Left_UpperArm: 0.9118576049804688
+        Joint_Left_Elbow: -121.80369567871094
+        Joint_Left_Forearm: -0.2513509690761566
+        Joint_Left_Wrist_Upper: -1.1911849975585938
+        Joint_Left_Wrist_Lower: -12.360074043273926
+        Joint_Right_Shoulder_Inner: 43.67132568359375
+        Joint_Right_Shoulder_Outer: 0.9173736572265625
+        Joint_Right_UpperArm: -0.9118576049804688
+        Joint_Right_Elbow: -121.80369567871094
+        Joint_Right_Forearm: 0.2513509690761566
+        Joint_Right_Wrist_Upper: 1.2348982095718384
+        Joint_Right_Wrist_Lower: -12.360074043273926
+        Joint_Ankle: -40.714027404785156
+        Joint_Knee: -83.03286743164062
+        Joint_Waist_Pitch: -43.396949768066406
+        Joint_Waist_Yaw: 0.042356379330158234
+        Joint_Left_Gripper: 10.0
+        Joint_Right_Gripper: 275.7382583618164
+    visual_bindings:
+      '0':
+        reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+        side: right
+        mode: position
+        taught_object_pose:
+        - - 1.0
+          - 0.0
+          - 0.0
+          - 0.565871187481811
+        - - 0.0
+          - 1.0
+          - 0.0
+          - -0.16392204488017803
+        - - 0.0
+          - 0.0
+          - 1.0
+          - 0.7989800678074177
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        relative_tcp:
+        - - 0.999539969125125
+          - -0.00018037347424739917
+          - -0.03032849463382249
+          - -0.3158404607952799
+        - - 0.0001581654528429155
+          - 0.9999997176388464
+          - -0.0007346467978275624
+          - -0.06344461969438772
+        - - 0.030328618581028918
+          - 0.0007295119175306325
+          - 0.9995397154227188
+          - 0.060925343707831314
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+      '1':
+        reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+        side: right
+        mode: position
+        taught_object_pose:
+        - - 1.0
+          - 0.0
+          - 0.0
+          - 0.565871187481811
+        - - 0.0
+          - 1.0
+          - 0.0
+          - -0.16392204488017803
+        - - 0.0
+          - 0.0
+          - 1.0
+          - 0.7989800678074177
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        relative_tcp:
+        - - 0.8173321886068956
+          - -0.5712863417165814
+          - -0.07483320944037346
+          - -0.10586308511764342
+        - - 0.0306846247056802
+          - -0.08653730255393895
+          - 0.9957759532512119
+          - -0.03340315296752355
+        - - -0.5753490655886501
+          - -0.8161759681801302
+          - -0.05320001589749392
+          - 0.12070716572176443
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+      '2':
+        reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+        side: right
+        mode: position
+        taught_object_pose:
+        - - 1.0
+          - 0.0
+          - 0.0
+          - 0.565871187481811
+        - - 0.0
+          - 1.0
+          - 0.0
+          - -0.16392204488017803
+        - - 0.0
+          - 0.0
+          - 1.0
+          - 0.7989800678074177
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        relative_tcp:
+        - - 0.8173053679849461
+          - -0.5714241439453425
+          - -0.07407012339212043
+          - 0.044204014580727646
+        - - -0.07022369006041433
+          - -0.2263709106439445
+          - 0.9715064817943988
+          - -0.033659043922894705
+        - - -0.5719095809804994
+          - -0.7888159852149063
+          - -0.22514167240239177
+          - 0.09077340844065873
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+      '3':
+        reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+        side: right
+        mode: position
+        taught_object_pose:
+        - - 1.0
+          - 0.0
+          - 0.0
+          - 0.565871187481811
+        - - 0.0
+          - 1.0
+          - 0.0
+          - -0.16392204488017803
+        - - 0.0
+          - 0.0
+          - 1.0
+          - 0.7989800678074177
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        relative_tcp:
+        - - 0.8172678706341313
+          - -0.5714476105375792
+          - -0.0743024632165285
+          - 0.04417338792454839
+        - - -0.07021842616927279
+          - -0.2267335285967692
+          - 0.9714222972715671
+          - -0.033609949906961256
+        - - -0.571963810267278
+          - -0.7886948303500848
+          - -0.22542817996778514
+          - 0.0907097221496953
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+      '4':
+        reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+        side: right
+        mode: position
+        taught_object_pose:
+        - - 1.0
+          - 0.0
+          - 0.0
+          - 0.565871187481811
+        - - 0.0
+          - 1.0
+          - 0.0
+          - -0.16392204488017803
+        - - 0.0
+          - 0.0
+          - 1.0
+          - 0.7989800678074177
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+        relative_tcp:
+        - - 0.8173321886068956
+          - -0.5712863417165814
+          - -0.07483320944037346
+          - -0.10586308511764342
+        - - 0.0306846247056802
+          - -0.08653730255393895
+          - 0.9957759532512119
+          - -0.03340315296752355
+        - - -0.5753490655886501
+          - -0.8161759681801302
+          - -0.05320001589749392
+          - 0.12070716572176443
+        - - 0.0
+          - 0.0
+          - 0.0
+          - 1.0
+teaching_editor:
+  轨迹_1:
+    record_digest: ee35be5f9c89a64a3932e9b2ed4aa5f4b64d733114de219c24d4316699d9b2f3
+    draft:
+      version: 1
+      name: 轨迹_1
+      frames:
+      - label: 起点 · 0.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.010928303003311157
+          Joint_Neck_Pitch: 0.16392454504966736
+          Joint_Neck_Yaw: 0.03278490900993347
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.010986328125
+          Joint_Left_UpperArm: -0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: 19.96246337890625
+          Joint_Right_Shoulder_Outer: 0.0054931640625
+          Joint_Right_UpperArm: -0.010982944630086422
+          Joint_Right_Elbow: -110.0045166015625
+          Joint_Right_Forearm: -0.010928303003311157
+          Joint_Right_Wrist_Upper: -0.010928303003311157
+          Joint_Right_Wrist_Lower: 0.010928303003311157
+          Joint_Ankle: 0.6586475372314453
+          Joint_Knee: 1.3470096588134766
+          Joint_Waist_Pitch: 0.7051678895950317
+          Joint_Waist_Yaw: -0.0008171648951247334
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 80.0
+        minimum_sec: 0.6
+        ghost: true
+        sample_index: 0
+      - label: 轨迹段 · 5.0s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.12021133303642273
+          Joint_Neck_Yaw: 0.03278490900993347
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.010986328125
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: 3.3673553466796875
+          Joint_Right_Shoulder_Outer: -1.51611328125
+          Joint_Right_UpperArm: -0.45041000843048096
+          Joint_Right_Elbow: -102.9734115600586
+          Joint_Right_Forearm: 1.0381888151168823
+          Joint_Right_Wrist_Upper: -0.44806042313575745
+          Joint_Right_Wrist_Lower: 9.169010162353516
+          Joint_Ankle: 0.6598491668701172
+          Joint_Knee: 1.3373966217041016
+          Joint_Waist_Pitch: 0.7070292234420776
+          Joint_Waist_Yaw: -0.0008171648951247334
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 122
+      - label: 夹爪交互 · 8.9s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.12021133303642273
+          Joint_Neck_Yaw: 0.03278490900993347
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.010986328125
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: -40.452301025390625
+          Joint_Right_Shoulder_Outer: 2.6367645263671875
+          Joint_Right_UpperArm: -0.362546443939209
+          Joint_Right_Elbow: -56.875423431396484
+          Joint_Right_Forearm: 4.928773880004883
+          Joint_Right_Wrist_Upper: -2.721147298812866
+          Joint_Right_Wrist_Lower: 5.51890230178833
+          Joint_Ankle: 0.6697196960449219
+          Joint_Knee: 1.3290367126464844
+          Joint_Waist_Pitch: 0.7204216718673706
+          Joint_Waist_Yaw: -0.000771766877733171
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 218
+      - label: 轨迹段 · 10.0s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.14206793904304504
+          Joint_Neck_Yaw: 0.03278490900993347
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.010986328125
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: -39.6173095703125
+          Joint_Right_Shoulder_Outer: 2.7301483154296875
+          Joint_Right_UpperArm: -0.2087305784225464
+          Joint_Right_Elbow: -59.0067138671875
+          Joint_Right_Forearm: 5.453332424163818
+          Joint_Right_Wrist_Upper: -1.431607723236084
+          Joint_Right_Wrist_Lower: 5.912321090698242
+          Joint_Ankle: 0.6698055267333984
+          Joint_Knee: 1.3288650512695312
+          Joint_Waist_Pitch: 0.7205578684806824
+          Joint_Waist_Yaw: -0.0007263688021339476
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 290.50277519226074
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 244
+      - label: 夹爪交互 · 14.6s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.16392454504966736
+          Joint_Neck_Yaw: 0.207637757062912
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.0164794921875
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: -4.444091796875
+          Joint_Right_Shoulder_Outer: -12.689453125
+          Joint_Right_UpperArm: -5.548026084899902
+          Joint_Right_Elbow: -103.76439666748047
+          Joint_Right_Forearm: -25.015213012695312
+          Joint_Right_Wrist_Upper: 27.39769172668457
+          Joint_Right_Wrist_Lower: 20.337900161743164
+          Joint_Ankle: 0.6679000854492188
+          Joint_Knee: 1.3294143676757812
+          Joint_Waist_Pitch: 0.7196044921875
+          Joint_Waist_Yaw: -0.0003177863545715809
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 290.50277519226074
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 355
+      - label: 轨迹段 · 15.0s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.14206793904304504
+          Joint_Neck_Yaw: 0.207637757062912
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.0164794921875
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.010928303003311157
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: -4.7462158203125
+          Joint_Right_Shoulder_Outer: -12.49169921875
+          Joint_Right_UpperArm: -5.526060104370117
+          Joint_Right_Elbow: -104.02804565429688
+          Joint_Right_Forearm: -24.66550636291504
+          Joint_Right_Wrist_Upper: 27.485118865966797
+          Joint_Right_Wrist_Lower: 20.490896224975586
+          Joint_Ankle: 0.6679000854492188
+          Joint_Knee: 1.3294315338134766
+          Joint_Waist_Pitch: 0.7196044921875
+          Joint_Waist_Yaw: -0.00027238830807618797
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 366
+      - label: 终点 · 19.4s
+        joints_deg:
+          Joint_Neck_Roll: 0.010928303003311157
+          Joint_Neck_Pitch: 0.14206793904304504
+          Joint_Neck_Yaw: 0.207637757062912
+          Joint_Left_Shoulder_Inner: 19.95697021484375
+          Joint_Left_Shoulder_Outer: 0.0164794921875
+          Joint_Left_UpperArm: 0.010982944630086422
+          Joint_Left_Elbow: -110.00457000732422
+          Joint_Left_Forearm: 0.03278490900993347
+          Joint_Left_Wrist_Upper: -0.010928303003311157
+          Joint_Left_Wrist_Lower: -0.010928303003311157
+          Joint_Right_Shoulder_Inner: -4.6693115234375
+          Joint_Right_Shoulder_Outer: -12.6290283203125
+          Joint_Right_UpperArm: -5.548026084899902
+          Joint_Right_Elbow: -104.81903839111328
+          Joint_Right_Forearm: -23.856813430786133
+          Joint_Right_Wrist_Upper: 26.151811599731445
+          Joint_Right_Wrist_Lower: 20.38161277770996
+          Joint_Ankle: 0.6679000854492188
+          Joint_Knee: 1.3294315338134766
+          Joint_Waist_Pitch: 0.7196044921875
+          Joint_Waist_Yaw: -0.0003177863545715809
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 473
+      kind: trajectory
+      trajectory_ref: 519d79e3c6858349cf0c6d3d0c851d3af6878af09949d1a9ea3325d26be3d449
+      recorded_sec: 19.387095373999728
+      notes: 474个采样；2次夹爪交互；1处同步开合已拆分；0次复位，压缩静止等待0.0s
+      timing: recorded
+    curve: quintic_rest_to_rest_v1
+  丢垃圾:
+    record_digest: b210decb419f2d5e68356b35ad8cbd94af200c33178b85c8be64263463abc1bf
+    draft:
+      version: 1
+      name: 丢垃圾
+      frames:
+      - label: 起点 · 0.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.430543899536133
+          Joint_Neck_Yaw: -2.240356683731079
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: 2.8125457763671875
+          Joint_Right_Shoulder_Outer: 3.49920654296875
+          Joint_Right_UpperArm: 3.438645124435425
+          Joint_Right_Elbow: -100.31477355957031
+          Joint_Right_Forearm: 6.699158668518066
+          Joint_Right_Wrist_Upper: 8.972246170043945
+          Joint_Right_Wrist_Lower: -12.228934288024902
+          Joint_Ankle: -35.046730041503906
+          Joint_Knee: -71.47631072998047
+          Joint_Waist_Pitch: -37.341529846191406
+          Joint_Waist_Yaw: -0.0011349512496963143
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.6
+        ghost: true
+        sample_index: 0
+      - label: 夹爪交互 · 1.7s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.45240020751953
+          Joint_Neck_Yaw: -2.240356683731079
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: 3.4772186279296875
+          Joint_Right_Shoulder_Outer: 3.64202880859375
+          Joint_Right_UpperArm: 3.6803791522979736
+          Joint_Right_Elbow: -101.91871643066406
+          Joint_Right_Forearm: 7.3985700607299805
+          Joint_Right_Wrist_Upper: 9.037816047668457
+          Joint_Right_Wrist_Lower: -11.857372283935547
+          Joint_Ankle: -35.04674530029297
+          Joint_Knee: -71.47631072998047
+          Joint_Waist_Pitch: -37.341575622558594
+          Joint_Waist_Yaw: -0.0011349512496963143
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 10.0
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 41
+      - label: 轨迹段 · 5.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.16392454504966736
+          Joint_Neck_Pitch: 25.430543899536133
+          Joint_Neck_Yaw: -2.240356683731079
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: -11.27764892578125
+          Joint_Right_Shoulder_Outer: 2.7795867919921875
+          Joint_Right_UpperArm: 1.9665480852127075
+          Joint_Right_Elbow: -92.75626373291016
+          Joint_Right_Forearm: 22.807695388793945
+          Joint_Right_Wrist_Upper: 23.988006591796875
+          Joint_Right_Wrist_Lower: 1.759456753730774
+          Joint_Ankle: -35.04635238647461
+          Joint_Knee: -71.47636413574219
+          Joint_Waist_Pitch: -37.34121322631836
+          Joint_Waist_Yaw: -0.0011803492670878768
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 290.2732906341553
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 122
+      - label: 夹爪交互 · 8.7s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.45240020751953
+          Joint_Neck_Yaw: -2.2622132301330566
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: -43.58892822265625
+          Joint_Right_Shoulder_Outer: 7.5367431640625
+          Joint_Right_UpperArm: -5.218428611755371
+          Joint_Right_Elbow: -24.576059341430664
+          Joint_Right_Forearm: 38.21687698364258
+          Joint_Right_Wrist_Upper: 7.31114387512207
+          Joint_Right_Wrist_Lower: -8.709966659545898
+          Joint_Ankle: -35.05352783203125
+          Joint_Knee: -71.47579956054688
+          Joint_Waist_Pitch: -37.34016799926758
+          Joint_Waist_Yaw: -0.001316543435677886
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 290.57927894592285
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 213
+      - label: 轨迹段 · 10.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.45240020751953
+          Joint_Neck_Yaw: -2.3277831077575684
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: -37.628753662109375
+          Joint_Right_Shoulder_Outer: 6.7841644287109375
+          Joint_Right_UpperArm: -0.6701235175132751
+          Joint_Right_Elbow: -37.58369064331055
+          Joint_Right_Forearm: 38.21687698364258
+          Joint_Right_Wrist_Upper: 10.152557373046875
+          Joint_Right_Wrist_Lower: -5.234766483306885
+          Joint_Ankle: -35.06116485595703
+          Joint_Knee: -71.4687271118164
+          Joint_Waist_Pitch: -37.347023010253906
+          Joint_Waist_Yaw: -0.0011349512496963143
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 124.11688423156738
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 245
+      - label: 轨迹段 · 15.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.45240020751953
+          Joint_Neck_Yaw: -2.39335298538208
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: 6.015106201171875
+          Joint_Right_Shoulder_Outer: 7.3389739990234375
+          Joint_Right_UpperArm: 5.372244358062744
+          Joint_Right_Elbow: -112.33361053466797
+          Joint_Right_Forearm: 12.032225608825684
+          Joint_Right_Wrist_Upper: 5.9997477531433105
+          Joint_Right_Wrist_Lower: 2.91796612739563
+          Joint_Ankle: -35.04513168334961
+          Joint_Knee: -71.47457885742188
+          Joint_Waist_Pitch: -37.34089279174805
+          Joint_Waist_Yaw: -0.0011349512496963143
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 12.886895179748535
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 367
+      - label: 终点 · 16.0s
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 25.45240020751953
+          Joint_Neck_Yaw: -2.39335298538208
+          Joint_Left_Shoulder_Inner: 0.46142578125
+          Joint_Left_Shoulder_Outer: 3.88372802734375
+          Joint_Left_UpperArm: 2.8014705181121826
+          Joint_Left_Elbow: -98.60093688964844
+          Joint_Left_Forearm: 1.890650987625122
+          Joint_Left_Wrist_Upper: -13.955606460571289
+          Joint_Left_Wrist_Lower: -11.682519912719727
+          Joint_Right_Shoulder_Inner: 6.015106201171875
+          Joint_Right_Shoulder_Outer: 7.3389739990234375
+          Joint_Right_UpperArm: 5.372244358062744
+          Joint_Right_Elbow: -112.33361053466797
+          Joint_Right_Forearm: 12.032225608825684
+          Joint_Right_Wrist_Upper: 5.977890968322754
+          Joint_Right_Wrist_Lower: 2.91796612739563
+          Joint_Ankle: -35.04513168334961
+          Joint_Knee: -71.47457885742188
+          Joint_Waist_Pitch: -37.3409423828125
+          Joint_Waist_Yaw: -0.0011349512496963143
+          Joint_Left_Gripper: 11.43305516242981
+          Joint_Right_Gripper: 12.886895179748535
+        hold_sec: 0.0
+        speed_percent: 100.0
+        minimum_sec: 0.2
+        ghost: true
+        sample_index: 390
+      kind: trajectory
+      trajectory_ref: c4c5256d0fa183c838b393a97bc37f231e16c0778d7bfab2829b8113ed7baffe
+      recorded_sec: 15.97923867099962
+      notes: 391个采样；按原始时序；2次夹爪交互，1处同步开合保留；0次复位
+      timing: recorded
+    curve: quintic_rest_to_rest_v1
+  丢垃圾全程:
+    record_digest: ee372c5c1fb45cb17cd15a9f300355c1a660551d514f20a0208056dd4afa488a
+    draft:
+      version: 1
+      name: 丢垃圾全程
+      frames:
+      - label: 丢垃圾-1
+        joints_deg:
+          Joint_Neck_Roll: -0.12021133303642273
+          Joint_Neck_Pitch: 29.95496940612793
+          Joint_Neck_Yaw: 0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.67132568359375
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: 43.67132568359375
+          Joint_Right_Shoulder_Outer: 0.9173736572265625
+          Joint_Right_UpperArm: -0.9118576049804688
+          Joint_Right_Elbow: -121.80369567871094
+          Joint_Right_Forearm: 0.2513509690761566
+          Joint_Right_Wrist_Upper: 1.2348982095718384
+          Joint_Right_Wrist_Lower: -12.360074043273926
+          Joint_Ankle: -40.714027404785156
+          Joint_Knee: -83.03286743164062
+          Joint_Waist_Pitch: -43.396949768066406
+          Joint_Waist_Yaw: 0.042356379330158234
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 275.7382583618164
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.999539969125125
+            - -0.00018037347424739917
+            - -0.03032849463382249
+            - -0.3158404607952799
+          - - 0.0001581654528429155
+            - 0.9999997176388464
+            - -0.0007346467978275624
+            - -0.06344461969438772
+          - - 0.030328618581028918
+            - 0.0007295119175306325
+            - 0.9995397154227188
+            - 0.060925343707831314
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: true
+      - label: 丢垃圾-2
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 29.93311309814453
+          Joint_Neck_Yaw: -0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.66033935546875
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: -30.9874267578125
+          Joint_Right_Shoulder_Outer: -29.608612060546875
+          Joint_Right_UpperArm: 29.08037757873535
+          Joint_Right_Elbow: -112.92684936523438
+          Joint_Right_Forearm: 6.240170001983643
+          Joint_Right_Wrist_Upper: 56.53298568725586
+          Joint_Right_Wrist_Lower: 66.5653305053711
+          Joint_Ankle: -40.713993072509766
+          Joint_Knee: -83.03327941894531
+          Joint_Waist_Pitch: -43.39712905883789
+          Joint_Waist_Yaw: 0.04240177944302559
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 275.8147621154785
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.8173321886068956
+            - -0.5712863417165814
+            - -0.07483320944037346
+            - -0.10586308511764342
+          - - 0.0306846247056802
+            - -0.08653730255393895
+            - 0.9957759532512119
+            - -0.03340315296752355
+          - - -0.5753490655886501
+            - -0.8161759681801302
+            - -0.05320001589749392
+            - 0.12070716572176443
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: true
+      - label: 丢垃圾-3
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 29.93311309814453
+          Joint_Neck_Yaw: -0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.66033935546875
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: -53.119720458984375
+          Joint_Right_Shoulder_Outer: -13.83203125
+          Joint_Right_UpperArm: 40.0885124206543
+          Joint_Right_Elbow: -62.456398010253906
+          Joint_Right_Forearm: 44.817626953125
+          Joint_Right_Wrist_Upper: 49.66990280151367
+          Joint_Right_Wrist_Lower: 29.867488861083984
+          Joint_Ankle: -40.71384048461914
+          Joint_Knee: -83.03340148925781
+          Joint_Waist_Pitch: -43.397178649902344
+          Joint_Waist_Yaw: 0.042356379330158234
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 275.8147621154785
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.8173053679849461
+            - -0.5714241439453425
+            - -0.07407012339212043
+            - 0.044204014580727646
+          - - -0.07022369006041433
+            - -0.2263709106439445
+            - 0.9715064817943988
+            - -0.033659043922894705
+          - - -0.5719095809804994
+            - -0.7888159852149063
+            - -0.22514167240239177
+            - 0.09077340844065873
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: true
+      - label: 丢垃圾-4
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 29.93311309814453
+          Joint_Neck_Yaw: -0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.66033935546875
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: -53.119720458984375
+          Joint_Right_Shoulder_Outer: -13.83203125
+          Joint_Right_UpperArm: 40.110477447509766
+          Joint_Right_Elbow: -62.456398010253906
+          Joint_Right_Forearm: 44.817626953125
+          Joint_Right_Wrist_Upper: 49.66990280151367
+          Joint_Right_Wrist_Lower: 29.867488861083984
+          Joint_Ankle: -40.71384048461914
+          Joint_Knee: -83.03340148925781
+          Joint_Waist_Pitch: -43.39712905883789
+          Joint_Waist_Yaw: 0.042356379330158234
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 108.97777777777779
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.8172678706341313
+            - -0.5714476105375792
+            - -0.0743024632165285
+            - 0.04417338792454839
+          - - -0.07021842616927279
+            - -0.2267335285967692
+            - 0.9714222972715671
+            - -0.033609949906961256
+          - - -0.571963810267278
+            - -0.7886948303500848
+            - -0.22542817996778514
+            - 0.0907097221496953
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: true
+      - label: 丢垃圾-2
+        joints_deg:
+          Joint_Neck_Roll: -0.18578115105628967
+          Joint_Neck_Pitch: 29.93311309814453
+          Joint_Neck_Yaw: -0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.66033935546875
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: -30.9874267578125
+          Joint_Right_Shoulder_Outer: -29.608612060546875
+          Joint_Right_UpperArm: 29.08037757873535
+          Joint_Right_Elbow: -112.92684936523438
+          Joint_Right_Forearm: 6.240170001983643
+          Joint_Right_Wrist_Upper: 56.53298568725586
+          Joint_Right_Wrist_Lower: 66.5653305053711
+          Joint_Ankle: -40.713993072509766
+          Joint_Knee: -83.03327941894531
+          Joint_Waist_Pitch: -43.39712905883789
+          Joint_Waist_Yaw: 0.04240177944302559
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 275.8147621154785
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.8173321886068956
+            - -0.5712863417165814
+            - -0.07483320944037346
+            - -0.10586308511764342
+          - - 0.0306846247056802
+            - -0.08653730255393895
+            - 0.9957759532512119
+            - -0.03340315296752355
+          - - -0.5753490655886501
+            - -0.8161759681801302
+            - -0.05320001589749392
+            - 0.12070716572176443
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: true
+      - label: 丢垃圾-1
+        joints_deg:
+          Joint_Neck_Roll: -0.12021133303642273
+          Joint_Neck_Pitch: 29.95496940612793
+          Joint_Neck_Yaw: 0.010928303003311157
+          Joint_Left_Shoulder_Inner: 43.67132568359375
+          Joint_Left_Shoulder_Outer: -0.9063720703125
+          Joint_Left_UpperArm: 0.9118576049804688
+          Joint_Left_Elbow: -121.80369567871094
+          Joint_Left_Forearm: -0.2513509690761566
+          Joint_Left_Wrist_Upper: -1.1911849975585938
+          Joint_Left_Wrist_Lower: -12.360074043273926
+          Joint_Right_Shoulder_Inner: 43.67132568359375
+          Joint_Right_Shoulder_Outer: 0.9173736572265625
+          Joint_Right_UpperArm: -0.9118576049804688
+          Joint_Right_Elbow: -121.80369567871094
+          Joint_Right_Forearm: 0.2513509690761566
+          Joint_Right_Wrist_Upper: 1.2348982095718384
+          Joint_Right_Wrist_Lower: -12.360074043273926
+          Joint_Ankle: -40.714027404785156
+          Joint_Knee: -83.03286743164062
+          Joint_Waist_Pitch: -43.396949768066406
+          Joint_Waist_Yaw: 0.042356379330158234
+          Joint_Left_Gripper: 10.0
+          Joint_Right_Gripper: 275.7382583618164
+        hold_sec: 0.0
+        speed_percent: 70.0
+        minimum_sec: 0.6
+        ghost: true
+        visual_binding:
+          reference: 73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a
+          side: right
+          mode: position
+          taught_object_pose:
+          - - 1.0
+            - 0.0
+            - 0.0
+            - 0.565871187481811
+          - - 0.0
+            - 1.0
+            - 0.0
+            - -0.16392204488017803
+          - - 0.0
+            - 0.0
+            - 1.0
+            - 0.7989800678074177
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+          relative_tcp:
+          - - 0.999539969125125
+            - -0.00018037347424739917
+            - -0.03032849463382249
+            - -0.3158404607952799
+          - - 0.0001581654528429155
+            - 0.9999997176388464
+            - -0.0007346467978275624
+            - -0.06344461969438772
+          - - 0.030328618581028918
+            - 0.0007295119175306325
+            - 0.9995397154227188
+            - 0.060925343707831314
+          - - 0.0
+            - 0.0
+            - 0.0
+            - 1.0
+        visual_enabled: false
+    curve: quintic_rest_to_rest_v1

@@ -28,7 +28,7 @@ def test_unknown_identity_rechecks_mask_and_appearance():
     assert not same_target(a,{**a,'product':{'id':'new-registration'}},'a')
 
 
-@pytest.mark.parametrize('label',['table','white bag','person','hand','rope','towel'])
+@pytest.mark.parametrize('label',['table','person','hand','cat','dog'])
 def test_not_all_semantic_masks_are_graspable(label):
     with pytest.raises(ValueError):temporary_product(item(label),'s')
 
@@ -45,7 +45,8 @@ def test_multiframe_geometry_and_identity():
     product=combine_product(template,samples);require_placeable(product)
     assert product['dimension_frames']==5 and 'height_m' not in template
     samples[-1][1]['temporary_product']['height_m']=.24
-    with pytest.raises(ValueError,match='尺寸不稳定'):combine_product(template,samples)
+    assert combine_product(template,samples)['dimension_inlier_indices']==[0,1,2,3]
+    with pytest.raises(ValueError):combine_product(template,[samples[0],samples[-1]])
 
 
 def test_temporary_geometry_must_be_confirmed_for_place():

@@ -2,11 +2,12 @@
 import json
 import math
 import time
+import uuid
 from copy import deepcopy
 from PyQt5 import QtCore as C, QtGui as G, QtWidgets as Q
 from .core import atomic_json
 from .task_flow import validate, KINDS
-from .task_capabilities import require_perception, needs_grasp_preparation
+from .task_capabilities import needs_grasp_preparation
 
 
 from .task_display import TaskDisplay
@@ -48,10 +49,10 @@ class AutomaticTaskPage(Q.QWidget):
         self.pause_button=Q.QPushButton('暂停任务');self.pause_button.clicked.connect(self.toggle_pause);layout.addWidget(self.pause_button)
         self.continue_button=Q.QPushButton('手动继续当前任务');layout.addWidget(self.continue_button)
         self.continue_button.clicked.connect(self.continue_task)
-        self.continue_button.setToolTip('从失败步骤重试并完成本轮剩余步骤，不重新启动自动循环。')
+        self.continue_button.setToolTip('确认当前现场状态后，从保留的步骤重试；原循环设置继续生效。')
         self.stop_button = Q.QPushButton('紧急停止任务'); self.stop_button.setObjectName('stop')
         self.stop_button.setMinimumHeight(54); self.stop_button.clicked.connect(self.stop); layout.addWidget(self.stop_button)
-        note = Q.QLabel('含视觉抓取的任务从空载开始，并自动复位准备；纯动作/导航任务直接按步骤执行。异常停止循环。\n关闭 Logo 窗口会停止任务；Esc 仅退出全屏。危险时使用实体急停。')
+        note = Q.QLabel('按流程执行；抓取准备遵循配置。识别与规划在未下发动作时有限重试，其余异常保留当前步骤等待确认。\n关闭 Logo 窗口会停止任务；Esc 仅退出全屏。危险时使用实体急停。')
         note.setWordWrap(True); layout.addWidget(note)
         self.names.currentTextChanged.connect(self.preview)
         self.library = {}; self.refresh_library()
@@ -92,31 +93,34 @@ class AutomaticTaskPage(Q.QWidget):
 
     def available(self):
         o = self.owner
-        return (not o.busy and o.motion is None and not o.cancel_pending
-                and not o.demo_active and not o.placement_active and not o.workflow.active
-                and not o.workflow.base.moving() and not o.studio.moving() and not o.navigation.inflight
-                and o.chassis_dialog is None)
+        return not o.workflow.pending and o.workflow.channels_idle() and o.chassis_dialog is None
 
     def start(self, mode, *, confirmed=False, repeat=False):
         if self.active: return
         try:
             if not self.available(): raise ValueError('请等待当前操作停止、后台就绪后再启动')
             record = deepcopy(self.record) if repeat else validate(self.library[self.names.currentText()])
-            require_perception(self.owner, record)
             name = self.task_name if repeat else self.names.currentText()
             if mode not in ('single', 'loop'): raise ValueError('运行模式无效')
             if not confirmed:
-                preparation=('将清理旧持物记录并自动复位张开夹爪，请确认双爪空载。' if needs_grasp_preparation(record) else '将按步骤执行；不会额外进行抓取复位或张开夹爪。')
+                preparation=('请确保抓取使用的夹爪可用。放置使用最近完成的抓取记录。' if needs_grasp_preparation(record) else '按已编排步骤执行。')
                 text = ('单次执行' if mode == 'single' else '自动循环执行')+'流程“'+name+'”。\n'+preparation+'请确认场地适合运行，人员离开运动范围。'
                 if Q.QMessageBox.question(self, '开始自动任务', text, defaultButton=Q.QMessageBox.No) != Q.QMessageBox.Yes: return
             if not self.available(): raise ValueError('确认期间状态已改变，请等待操作停止后再启动')
             self.owner.invalidate_plan(); self.owner.studio.release()
             self.record = deepcopy(record); self.task_name = name; self.mode = mode; self.completed = 0
+            self.task_id=uuid.uuid4().hex
             self.limit = 1 if mode == 'single' else self.cycles.value(); self.interval_s = self.interval.value()
             # Freeze fixed actions along with the task definition for this session.
             if not repeat:
-                self.actions = deepcopy(self.owner.studio.records())
+                self.actions = self.owner.workflow.snapshot_actions(record)
                 self.map = self.owner.navigation.data.get('active_map')
+            from .task_runtime import TaskRuntime
+            queued=TaskRuntime(record,task_id=self.task_id,metadata=dict(map=self.map,actions=self.actions,session_name=self.owner.run.name,
+                automatic=dict(task_name=self.task_name,mode=self.mode,limit=self.limit,
+                               interval_s=self.interval_s,completed=0)))
+            queued.state='waiting';queued.phase='cycle_interval';queued.reason='等待任务启动条件'
+            queued.store=self.owner.workflow.store;queued.persist()
             atomic_json(self.path, dict(name=name, interval_s=self.interval.value(), cycles=self.cycles.value(),display_direction=self.display_direction.currentData()))
             self.paused=False;self.round_prepared=False;self.deferred.clear();self.deferred_event=None
             (self.owner.run/'task_pause').unlink(missing_ok=True)
@@ -146,6 +150,18 @@ class AutomaticTaskPage(Q.QWidget):
             self.active = False; self.phase = 'completed'
         else:
             self.phase = 'waiting'; self.round_prepared=False; self.deadline = time.monotonic()+self.interval_s; self.settle_since = None
+            # Preserve the NEXT round before releasing this completed cursor.
+            # A process restart loads it as operator-confirmed waiting, never
+            # silently reruns the already completed round.
+            cursor=self.owner.workflow.cursor
+            saved=cursor.snapshot();saved.update(state='waiting',index=0,effect='none',
+                phase='cycle_interval',cycle_index=self.completed,retry_count=0)
+            saved['metadata']['automatic']['completed']=self.completed
+            try:cursor.store.save(saved)
+            except OSError as exc:
+                # Starting a new Cursor must persist successfully before any
+                # dispatch. Keep this interval pending until storage recovers.
+                self.last_error='下一轮等待状态保存：'+str(exc)
         self.owner.controls(); self.update_view()
 
     def abort(self, reason):
@@ -154,14 +170,19 @@ class AutomaticTaskPage(Q.QWidget):
         (self.owner.run/'task_pause').unlink(missing_ok=True)
         self.paused=False;self.deferred.clear();self.deferred_event=None
         self.active = False; self.phase = 'stopped'; self.run_id = None; self.last_error = str(reason)
+        self.owner.workflow.cancel(reason)
+        try:
+            saved=self.owner.workflow.store.read()
+            if saved and saved.get('task_id')==getattr(self,'task_id',None):
+                saved.update(state='cancelled',reason=str(reason));self.owner.workflow.store.save(saved)
+        except (OSError,ValueError):pass  # A damaged log must never block stopping motors.
         self.update_view()
 
     def stop(self):
-        self.owner.stop_motion(reason='停止自动任务', source='automatic_task')
+        self.owner.stop_motion(reason='停止自动任务', source='operator')
 
     def continue_task(self):
-        if self.active or not self.available() or not self.owner.workflow.retry_available:return
-        # 自动循环已停止：显式接回本轮快照，避免重跑已完成步骤或意外开启下一轮。
+        if not self.owner.workflow.channels_idle() or not self.owner.workflow.retry_available:return
         self.owner.module_tabs.setCurrentWidget(self.owner.grasp_page)
         self.owner.workflow.retry_current()
         self.update_view()
@@ -170,22 +191,22 @@ class AutomaticTaskPage(Q.QWidget):
         if self.active and not self.paused and self.phase == 'waiting' and time.monotonic() >= self.deadline:
             if self.available():
                 try:
-                    require_perception(self.owner, self.record)
-                    if not self.round_prepared and needs_grasp_preparation(self.record):
-                        from .task_pause import archive_held
-                        archive_held(self.owner.run)
-                        (self.owner.run/'stop').unlink(missing_ok=True)
-                        self.phase='preparing';self.owner.send('auto_prepare');self.update_view();return
                     self.phase = 'running'; self.launching = True
-                    self.owner.workflow.start(deepcopy(self.record), confirmed=True,
-                        actions_snapshot=self.actions, expected_map=self.map)
+                    self.last_error=''
+                    self.owner.workflow.start(self.record, confirmed=True, expected_map=self.map)
                 except Exception as exc:
-                    self.owner.stop_motion(reason='自动任务未开始：'+str(exc), source='automatic_task')
+                    # No step was dispatched. Keep the schedule and wait for
+                    # readiness instead of turning a transient startup into abort.
+                    if self.owner.workflow.pending:
+                        if self.owner.workflow.active:self.owner.workflow.fail(str(exc))
+                    else:
+                        self.phase='waiting';self.deadline=time.monotonic()+2.
+                        self.last_error='等待启动条件：'+str(exc)
                 finally: self.launching = False
             else:
                 if self.settle_since is None: self.settle_since = time.monotonic()
                 if time.monotonic()-self.settle_since > 30:
-                    self.owner.stop_motion(reason='上一轮执行通道未释放或后台未就绪', source='automatic_task')
+                    self.last_error='等待上一轮执行通道释放或后台就绪'
         self.update_view()
 
     def update_view(self):
@@ -194,24 +215,31 @@ class AutomaticTaskPage(Q.QWidget):
         self.single.setEnabled(not self.active and ready and bool(self.names.count()))
         self.loop.setEnabled(self.single.isEnabled())
         self.pause_button.setEnabled(self.active)
-        self.continue_button.setEnabled(not self.active and ready and self.owner.workflow.retry_available)
+        self.continue_button.setEnabled(self.owner.workflow.channels_idle() and self.owner.workflow.retry_available)
         self.pause_button.setText('继续任务' if self.paused else '暂停任务')
-        if self.phase == 'preparing':text='检查复位状态 · 未准备则自动复位并张开夹爪'
+        if not self.active and self.owner.workflow.waiting:
+            cursor=self.owner.workflow.cursor
+            text=f'任务已保留 · 第{cursor.index+1}步 · {KINDS[cursor.step["kind"]]}\n'+cursor.reason
+        elif self.phase == 'preparing':text='检查复位状态 · 未准备则自动复位并张开夹爪'
         elif self.phase == 'running':
             flow = self.owner.workflow; cursor = flow.cursor
             step = (f'步骤 {cursor.index+1}/{len(cursor.record["steps"])} · {KINDS[cursor.step["kind"]]} · {cursor.step["target"]}'
-                    if cursor and cursor.active else '处理中')
+                    if cursor and cursor.pending else '处理中')
             phase = {'prepare':'复位准备','prepare_navigation':'出发准备','navigate':'导航行驶',
                      'scan':'识别物品','plan':'规划抓取','confirm':'准备执行抓取','grasp':'抓取执行',
                      'place':'识别桌面 / 规划并放置','action':'执行示教动作','posture':'身体与头部调姿',
-                     'base':'执行底盘定量动作'}.get(flow.phase,'处理中')
+                     'base':'执行底盘定量动作','waiting':'等待恢复'}.get(flow.phase,'处理中')
             text = f'第 {self.completed+1} 轮 · {step}\n{phase} · '+self.owner.flow_label.text()
         elif self.phase == 'waiting':
             remaining = max(0, math.ceil(self.deadline-(self.paused_at if self.paused else time.monotonic())))
-            text = f'已完成 {self.completed} 轮 · 距下一轮 {remaining} 秒' if remaining else '正在准备下一轮…'
+            text = self.last_error or (f'已完成 {self.completed} 轮 · 距下一轮 {remaining} 秒' if remaining else '正在准备下一轮…')
         elif self.phase == 'completed': text = f'已完成 {self.completed} 轮 · 任务执行完毕'
         elif self.phase == 'stopped': text = '自动任务已停止 · '+self.last_error
         else: text = '选择已保存的任务流程，启动单次或自动循环。'
+        cursor=self.owner.workflow.cursor
+        if cursor and self.phase in ('running','waiting','completed') and cursor.metadata.get('cleanup_result'):
+            summary=cursor.metadata['cleanup_result']['text']
+            if summary not in text:text+='\n'+summary
         if self.paused:text='已请求暂停 · 保持当前步骤\n'+text
         self.state.setText(text)
         if self.display:
@@ -225,12 +253,21 @@ class AutomaticTaskPage(Q.QWidget):
         if not self.active:return
         if not self.paused:
             self.paused=True;self.paused_at=time.monotonic()
-            (self.owner.run/'task_pause').touch()
+            try:
+                (self.owner.run/'task_pause').touch()
+                if self.owner.workflow.active:self.owner.workflow.cursor.pause()
+            except OSError as exc:
+                self.owner.stop_motion(reason='暂停状态保存失败：'+str(exc),source='automatic_task')
         else:
+            try:
+                if self.owner.workflow.cursor:self.owner.workflow.cursor.unpause()
+                (self.owner.run/'task_pause').unlink(missing_ok=True)
+            except OSError as exc:
+                self.owner.stop_motion(reason='恢复状态保存失败：'+str(exc),source='automatic_task')
+                self.update_view();return
             elapsed=time.monotonic()-self.paused_at;self.paused=False
             if self.phase=='waiting':self.deadline+=elapsed
             if self.settle_since is not None:self.settle_since+=elapsed
-            (self.owner.run/'task_pause').unlink(missing_ok=True)
             event=self.deferred_event;self.deferred_event=None
             queued=list(self.deferred.values());self.deferred.clear()
             for method,args,token in queued:
@@ -252,13 +289,19 @@ class AutomaticTaskPage(Q.QWidget):
     def defer_worker_event(self,data):
         if self.active and self.paused and data.get('event') in ('scene','reset_planned','planned','observe_planned','place_planned','auto_prepared','base_reposition'):
             cursor=self.owner.workflow.cursor
-            token=cursor.token if cursor and cursor.active else None
+            token=cursor.token if cursor and cursor.pending else None
             self.deferred_event=(deepcopy(data),deepcopy(self.owner.last_worker_request),token)
             self.owner.busy=False;return True
         return False
 
     def prepared(self,result):
         if not self.active or self.phase!='preparing':return False
+        if (result.get('reason_code')=='FEEDBACK_UNAVAILABLE' and result.get('safe_to_retry') is True
+                and result.get('effect_certainty')=='not_dispatched'):
+            self.phase='waiting';self.deadline=time.monotonic()+1.
+            self.last_error=result.get('reason','等待读取真实关节位置')
+            if self.paused:self.paused_at=time.monotonic()
+            self.owner.controls();return True
         if result.get('status')!='prepared':
             self.owner.stop_motion(reason=result.get('reason','自动复位准备未成功'),source='automatic_task')
         else:

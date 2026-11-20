@@ -24,5 +24,5 @@ def test_live_frame_changes_even_with_selected_plan_and_keeps_annotations(tmp_pa
         assert b-a>150 and w.video.boxes==boxes and w.video.path==meta['path']
         w.overlay_revision=8;w.path_revision=None;send(100)
         assert not w.video.boxes and not w.video.path
-        assert '颜色可选' in w.semantic.placeholderText()
+        assert '名称或外观' in w.semantic.placeholderText()
     finally:w.close();app.processEvents()

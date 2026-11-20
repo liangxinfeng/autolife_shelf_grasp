@@ -2,8 +2,9 @@
 from copy import deepcopy
 import uuid
 import math
+from .task_runtime import TaskRuntime
 
-KINDS = {'navigate': '导航', 'grasp': '抓取', 'place': '放置', 'action': '示教动作', 'base':'底盘定量', 'tts':'语音播报'}
+KINDS = {'navigate': '导航', 'grasp': '抓取', 'cleanup': '自动清理桌面', 'place': '放置', 'action': '示教动作', 'base':'底盘定量', 'tts':'语音播报'}
 
 
 def full_record(record):
@@ -56,11 +57,16 @@ def validate(record):
     for row in rows:
         kind = row.get('kind'); target = str(row.get('target', '')).strip()
         if kind not in KINDS: raise ValueError('不支持的任务类型')
+        if kind=='cleanup':target='当前桌面'
         if kind not in ('place','base') and not target: raise ValueError('请填写航点、物品或动作名称')
         if len(target) > (500 if kind=='tts' else 160): raise ValueError('名称过长')
         from .step_posture import normalize
         item=dict(kind=kind,target=target);posture=normalize(row.get('posture'))
-        if kind=='tts':posture=None
+        if kind=='tts':
+            posture=None
+            required=row.get('required', False)
+            if type(required) is not bool:raise ValueError('播报必需标记无效')
+            item['required']=required
         if kind=='action' and row.get('action_speed_percent') is not None:
             from .action_speed import percent
             item['action_speed_percent']=percent(row['action_speed_percent'])
@@ -77,42 +83,32 @@ def validate(record):
     return dict(version=1, steps=result)
 
 
-class Cursor:
-    def __init__(self, record):
-        self.record = deepcopy(validate(record)); self.run_id = uuid.uuid4().hex
-        self.index = 0; self.active = True; self.reason = ''
-
-    @property
-    def token(self): return f'{self.run_id}:{self.index}'
-
-    @property
-    def step(self): return self.record['steps'][self.index]
-
-    def complete(self, token):
-        if not self.active or token != self.token: return False
-        self.index += 1
-        if self.index == len(self.record['steps']): self.active = False
-        return True
+class Cursor(TaskRuntime):
+    def __init__(self, record, **kwargs):
+        super().__init__(validate(record), **kwargs)
 
     def stop(self, reason):
-        self.active = False; self.reason = reason
+        self.wait(reason)
 
-    def retry(self):
-        if self.active or not 0<=self.index<len(self.record['steps']):
-            raise ValueError('没有已停止的当前步骤可重试')
-        # New attempt identity rejects delayed navigation/action completions.
-        self.run_id=uuid.uuid4().hex;self.active=True;self.reason=''
+    def retry(self, *, confirmed=True):
+        # Explicit legacy caller retries remain confirmed; automatic callers
+        # must opt in to the no-side-effect policy with confirmed=False.
+        super().retry(confirmed=confirmed)
 
 
 def select_instance(items, target, products):
     return select_candidates(items, target, products)[0]
 
 
+class TargetNotVisible(ValueError):
+    """A fresh task scan can recover without repeating any physical step."""
+
+
 def select_candidates(items, target, products, semantic=False):
     from .auto_grasp import rank_candidates
     product_ids = {p['id'] for p in products if p['name'] == target}
     matches = items if semantic else [v for v in items if v.get('product_id') in product_ids or v.get('name') == target]
-    if not matches: raise ValueError('未识别到任务目标：' + target)
+    if not matches: raise TargetNotVisible('未识别到任务目标：' + target)
     return rank_candidates(matches)
 
 

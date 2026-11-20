@@ -37,8 +37,10 @@ def test_preview_does_not_save_until_confirm_and_cannot_duplicate(tmp_path,monke
     from test_visual_followup import fixture
     m,a=fixture();image=np.zeros((100,100,3),np.uint8);mask=np.zeros((100,100),bool);mask[10:90,30:70]=1
     frame=dict(image=image,depth=np.ones((100,100)),K=np.eye(3),D=np.zeros(5))
-    v=object.__new__(VisualActions);v.run=tmp_path;v.store=ReferenceStore(tmp_path);v.cfg={};v.geometry=NS(root='base');v.frozen=None;v.pending_view=None;v.reference_cache={};v.perception=None;v.products=None
-    v.robot=NS(refresh_measured=lambda:None,base_sample=lambda:[0,0,0]);v.sample=lambda:(frame,{},np.eye(4));v.stable=lambda *a:None;v.model_hash=lambda:'test';v.mount=lambda *a:np.eye(4);v.check_mount=lambda *a:None
+    model=tmp_path/'model.urdf'
+    model.write_text('<robot name="test"><link name="base"/></robot>')
+    v=object.__new__(VisualActions);v.run=tmp_path;v.store=ReferenceStore(tmp_path);v.cfg={};v.geometry=NS(root='base',path=model);v.frozen=None;v.pending_view=None;v.reference_cache={};v.perception=None;v.products=None
+    v.robot=NS(refresh_measured=lambda:None,base_sample=lambda:[0,0,0]);v.sample=lambda:(frame,{},np.eye(4));v.stable=lambda *a:None;v.mount=lambda *a:np.eye(4);v.check_mount=lambda *a:None
     monkeypatch.setattr('autolife_shelf_grasp_306.visual_box_selection.segment_box',lambda *args:dict(mask=mask,box=[30,10,70,90]))
     monkeypatch.setattr('autolife_shelf_grasp_306.visual_action_worker.features',lambda *args,**kw:{k:a[k] for k in ('points','pixels','descriptors')})
     monkeypatch.setattr('autolife_shelf_grasp_306.bottle.object_points',lambda *args:(a['cloud'],None,None))

@@ -47,7 +47,8 @@ class FeedbackState:
 def ensure_ros():
     import rclpy
     if not rclpy.ok():
-        args=['--ros-args']
+        from .runtime_identity import identity
+        args=['--ros-args','-p',f'robot_id:={identity().robot_id}']
         for n in ('preview_command','apply_command','action_command','status','set_hardware_enabled','set_hardware_enabled_without_reset','set_leg_waist_enabled'):
             args+=['-r',f'/control_center_joint_control/{n}:=/shelf_grasp_joint_control/{n}']
         rclpy.init(args=args)
@@ -63,5 +64,6 @@ def create_monitor(robot_id,state):
     def receive(message):
         try:state.accept(json.loads(message.data))
         except (ValueError,TypeError):pass
-    node.create_subscription(String,f'/topic_arm_whole_body_and_gripper_current_joints_status_0_{int(robot_id)}',receive,qos)
+    from .runtime_identity import identity
+    node.create_subscription(String,f'/topic_arm_whole_body_and_gripper_current_joints_status_{identity({"robot_id":robot_id}).topic_suffix}',receive,qos)
     return node

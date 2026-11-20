@@ -15,7 +15,7 @@ def profiles(tmp_path,monkeypatch):
     for side in ('left','right'):
         (tmp_path/(side+'.json')).write_text(json.dumps({'config':{'arm':side},
             'report':{'quality_grade':'needs_validation' if side=='right' else 'pass'}}))
-    cfg={'arm':'left','calibration':str(tmp_path/'left.json'),'right_calibration':str(tmp_path/'right.json'),
+    cfg={'geometry_source':'calibrated','arm':'left','calibration':str(tmp_path/'left.json'),'right_calibration':str(tmp_path/'right.json'),
          'tcp_offset_mm':15.,'target_offset_torso_mm':[0,15,0],'robot_id':306}
     return CalibrationProfiles(cfg,None)
 
@@ -57,6 +57,24 @@ def test_legacy_profile_still_supported(profiles):
     assert data['config']['arm']=='left'
 
 
+def test_nominal_profiles_use_current_model_without_handeye_files(tmp_path):
+    from autolife_shelf_grasp_306.runtime_config import load_config
+    from autolife_shelf_grasp_306.grasp_geometry import same_nominal_camera
+    from autolife_handeye_calibration_306.core import Kinematics
+    cfg=load_config(Path(__file__).parents[1]);cfg['geometry_source']='urdf'
+    cfg['calibration']=str(tmp_path/'absent_left.json')
+    cfg['right_calibration']=str(tmp_path/'absent_right.json')
+    fk=Kinematics(cfg['urdf_path']);profiles=CalibrationProfiles(cfg,fk)
+    left,ld,lh=profiles.for_arm('left');right,rd,rh=profiles.for_arm('right')
+    assert ld['geometry_source']==rd['geometry_source']=='urdf'
+    assert ld['urdf_sha256']==rd['urdf_sha256']==fk.sha
+    assert same_nominal_camera(ld,rd) and lh!=rh
+    for cfg,data in ((left,ld),(right,rd)):
+        chosen,tcp=a.tool_geometry(cfg,data,fk,cfg['arm'])
+        assert chosen['tool_geometry']['provisional'] is True
+        assert np.allclose(tcp,np.asarray(data['T_wrist_tool'])[:3,3])
+
+
 @pytest.mark.parametrize('fail_right',[False,True])
 def test_pool_plans_arm_specific_point_and_product(profiles,monkeypatch,fail_right):
     monkeypatch.setattr(a,'rank_arms',lambda *a:['right','left'])
@@ -83,13 +101,15 @@ def test_pool_plans_arm_specific_point_and_product(profiles,monkeypatch,fail_rig
 
 def test_real_306_camera_and_tcp():
     """Offline FK only; never opens ROS, camera, driver or command publishers."""
-    import yaml
+    from autolife_shelf_grasp_306.runtime_config import load_config
     from autolife_handeye_calibration_306.core import Kinematics
     from autolife_handeye_calibration_306.verification_core import load_geometry,camera_transform
     root=Path('/home/ubuntu/ros2_ws/src/autolife_shelf_grasp_306')
     if not root.exists():pytest.skip('306 offline fixture not available')
-    cfg=yaml.safe_load((root/'config/grasp.yaml').read_text())
+    cfg=load_config(root)
     cfg['right_calibration']='/home/ubuntu/ros2_ws/src/autolife_handeye_calibration_306/sessions/20261012_172415_700141/session.json'
+    if cfg.get('geometry_source')=='urdf' or not all(Path(cfg[key]).is_file() for key in ('calibration','right_calibration')):
+        pytest.skip('historical measured hand-eye fixtures not available; this deployment uses nominal URDF geometry')
     fk=Kinematics(cfg['urdf_path']);profiles=CalibrationProfiles(cfg,fk)
     base=json.loads(Path(cfg['calibration']).read_text())
     left,ld,_=profiles.for_arm('left');right,rd,_=profiles.for_arm('right')
@@ -140,10 +160,11 @@ def test_worker_observation_callback_recomputes_geometry(tmp_path):
         t=np.eye(4);t[0,3]=.03;transforms.append(data['arm']);return t
     def estimate(frame,mask,T,up,product,cfg,reference):
         estimates.append(T.copy());return np.array([T[0,3]+.4,.2,.1]),{'shape':'right-shape'}
-    ns=dict(profiles=SimpleNamespace(resolve=lambda cfg:({'arm':cfg['arm']},cfg['arm'])),
+    ns=dict(__name__=worker.__name__,__package__=worker.__package__,
+        profiles=SimpleNamespace(resolve=lambda cfg:({'arm':cfg['arm']},cfg['arm'])),calibration={'arm':'left'},
         calibration_sha='left',fused=(np.array([.4,-.2,.1]),{}),geometry={'shape':'left-shape'},
         selected={'product':{'name':'left-product'}},T=np.eye(4),copy=copy,
-        arm_observations={},run=tmp_path,paired_frames=[({}, {},[0,0,1]) for _ in range(5)],
+        arm_observations={},arm_targets={},run=tmp_path,paired_frames=[({}, {},[0,0,1]) for _ in range(5)],
         camera_transform=transform,fk=None,cfg={'robot_id':306},temporary=True,mask=None,
         measured_product={'name':'template'},dimension_reference=None,estimate_temporary=estimate,
         DepthQualityError=ValueError,combine_product=lambda template,values:{'name':'right-product',
@@ -155,6 +176,9 @@ def test_worker_observation_callback_recomputes_geometry(tmp_path):
     assert np.allclose(point,[.43,.2,.1])
     assert transforms==['right']*5 and len(estimates)==5
     assert product['shape']=='right-shape' and product['name']=='right-product'
+    product['name']='mutated by caller'
+    _,cached=ns['observation_for_arm']('right',{'arm':'right'})
+    assert cached['name']=='right-product' and len(estimates)==5
     point,product=ns['observation_for_arm']('left',{'arm':'left'})
     assert np.allclose(point,[.4,-.2,.1])
     assert len(estimates)==5 and product['shape']=='left-shape'

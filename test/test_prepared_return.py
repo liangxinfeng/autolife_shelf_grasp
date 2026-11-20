@@ -9,10 +9,12 @@ def setup():
         q.update({n:0. for n,*_ in GROUPS[group]['joints']})
     return cfg,q
 
-def test_receipt_requires_actual_reset_pose_and_open_jaws():
+def test_receipt_requires_actual_reset_pose_and_finite_jaw_feedback():
     cfg,q=setup();assert ready_after_place(cfg,q)
     for joint in q:
-        assert not ready_after_place(cfg,{**q,joint:90.}),joint
+        # Jaw completion is based on its command timing, not a receipt-level
+        # opening residual. Body pose still needs to reach the saved target.
+        assert ready_after_place(cfg,{**q,joint:90.})==('Gripper' in joint),joint
         assert not ready_after_place(cfg,{**q,joint:float('nan')}),joint
 
 def test_missing_config_or_feedback_not_ready():

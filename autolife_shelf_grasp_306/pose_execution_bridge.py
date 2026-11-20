@@ -157,8 +157,8 @@ def make_bridge(base,context):
             from .action_pose_arrival import settled_arm_arrival,PoseEnvelope
             def geometry(actual,target):
                 if not hasattr(inner,'_arrival_envelope'):
-                    import yaml
-                    cfg=yaml.safe_load((context.owner.root/'config/grasp.yaml').read_text('utf-8'))
+                    from .runtime_config import load_config
+                    cfg=load_config(context.owner.root)
                     inner._arrival_envelope=PoseEnvelope(cfg['urdf_path'])
                 return inner._arrival_envelope.check(actual,target)
             receipt=settled_arm_arrival(inner,targets,geometry,timed_grippers=timed)

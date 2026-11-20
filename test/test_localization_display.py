@@ -34,6 +34,19 @@ def test_stationary_sample_still_requires_transform_agreement():
     assert g.check([1.,2.,0.],130.)
 
 
+def test_stationary_initialization_refreshes_pre_request_laser_sample():
+    gate=LocalizationGate()
+    gate.request(100.)
+    assert not gate.needs_stationary_scan()
+    gate.initial(100.)
+    assert gate.needs_stationary_scan()
+    pose=[.006,.012,.032]
+    gate.amcl(99.962,pose,[.001]*3)
+    assert not gate.check(pose,101.) and gate.needs_stationary_scan()
+    gate.amcl(101.1,pose,[.001]*3)
+    assert not gate.needs_stationary_scan() and gate.check(pose,102.)
+
+
 def test_invalid_uncertain_and_future_measurements_rejected():
     g=LocalizationGate();g.request(100.);g.initial(101.)
     for stamp,p,cov in [(101.1,[math.nan,2.,0.],[.01]*3),(105.,[1.,2.,0.],[.01]*3),

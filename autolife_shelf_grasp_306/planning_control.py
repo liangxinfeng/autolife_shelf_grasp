@@ -7,6 +7,8 @@
 import math
 import time
 
+VENDOR_IK_POSITION_TOLERANCE_M=.003
+
 
 class PlanningCancelled(RuntimeError):
     """用户取消整次请求，不能换臂或换候选继续运行。"""
@@ -18,12 +20,13 @@ class PlanningTimeout(RuntimeError):
 
 class PlanningControl:
     def __init__(self, stopped=lambda: False, on_status=lambda text: None,
-                 timeout_sec=45.0, update_interval_sec=0.5, clock=time.monotonic):
+                 timeout_sec=45.0, update_interval_sec=0.5, clock=time.monotonic,budget_name='整次规划'):
         for name, value in [('规划时限', timeout_sec), ('提示间隔', update_interval_sec)]:
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError(name + '必须为有限正数')
         self.stopped, self.on_status, self.clock = stopped, on_status, clock
         self.timeout_sec = float(timeout_sec)
+        self.budget_name=budget_name
         self.update_interval_sec = float(update_interval_sec)
         self.started = clock()
         self.deadline = self.started + self.timeout_sec
@@ -35,6 +38,18 @@ class PlanningControl:
         self.last_emitted_time = -float('inf')
         self.terminal = None
 
+    def limit_total(self, seconds):
+        self.timeout_sec=min(self.timeout_sec,seconds)
+        self.deadline=self.started+self.timeout_sec
+
+    def finish_validated_approach(self):
+        # The approach and grasp waypoints have passed IK, aperture and collision checks.
+        # Use the original hard deadline to finish the carry and native checks.
+        self.checkpoint()
+        self.timeout_sec=self.finish_budget
+        self.deadline=self.started+self.finish_budget
+        self.finish_budget=None
+
     def _label(self, elapsed):
         prefix = {'left': '左臂', 'right': '右臂', None: '路径规划'}[self.arm]
         candidate = ''
@@ -42,7 +57,7 @@ class PlanningControl:
             candidate = f' · 候选{self.candidate}'
             if self.total_candidates is not None:
                 candidate += f'/{self.total_candidates}'
-        return f'{prefix} · {self.phase}{candidate} · 已用{elapsed:.1f}秒'
+        return f'{prefix} · {self.phase}{candidate} · 已用{elapsed:.1f}/{self.timeout_sec:g}秒'
 
     def checkpoint(self):
         """检查取消和全局预算。频繁调用时只按间隔发送文本，避免刷新拖慢计算。"""
@@ -55,7 +70,7 @@ class PlanningControl:
         now = self.clock()
         elapsed = max(0.0, now - self.started)
         if now >= self.deadline:
-            message = self._label(elapsed) + f'；整次规划达到{self.timeout_sec:g}秒时限'
+            message = self._label(elapsed) + f'；{self.budget_name}达到{self.timeout_sec:g}秒时限'
             self.terminal = (PlanningTimeout, message)
             raise PlanningTimeout(message)
         key = (self.arm, self.phase)

@@ -130,7 +130,8 @@ def make_binding(store,ident,side,mode,q,geometry):
     if side not in ('left','right') or mode not in ('position','rigid'):raise ValueError('参照手臂或纠偏方式无效')
     meta,_=store.load(ident)
     if meta.get('parent_reference'):raise ValueError('请选择物体编号，补录图片不是独立位姿基准')
-    if meta['model_sha256']!=hashlib.sha256(geometry.path.read_bytes()).hexdigest():raise ValueError('本机模型已变化，请重新记录物体参照')
+    from .visual_model import check_reference_model
+    check_reference_model(meta,geometry)
     tcp=geometry.frames(q)['Link_'+side.title()+'_Wrist_Lower_to_Gripper']@geometry.tool_transform(side)
     return binding(dict(reference=ident,side=side,mode=mode,taught_object_pose=meta['object_pose'],relative_tcp=(np.linalg.inv(matrix(meta['object_pose']))@tcp).tolist()))
 

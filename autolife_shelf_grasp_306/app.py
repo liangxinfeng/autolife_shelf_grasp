@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from PyQt5 import QtCore as C, QtGui as G, QtWidgets as Q
 from .no_wheel import NoWheelDoubleSpinBox
@@ -208,7 +209,7 @@ class Window(DemoNavigation,Q.QWidget):
         self.demo.toggled.connect(lambda _:self.controls())
         self.demo_settings=Q.QPushButton('演示参数');header.addWidget(self.demo_settings)
         self.demo_settings.clicked.connect(self.edit_demo_settings)
-        self.badge=Q.QLabel('306 · 双臂自动选手');self.badge.setObjectName('muted');header.addWidget(self.badge);outer.addLayout(header)
+        self.badge=Q.QLabel(os.environ.get('ROBOT_ID', '机器人')+' · 双臂自动选手');self.badge.setObjectName('muted');header.addWidget(self.badge);outer.addLayout(header)
         flow_row=Q.QHBoxLayout();outer.addLayout(flow_row)
         self.flow_button=Q.QPushButton('编排任务流程');flow_row.addWidget(self.flow_button)
         self.flow_label=Q.QLabel('导航 → 抓取 → 导航 → 放置 / 示教动作');flow_row.addWidget(self.flow_label,1)
@@ -263,8 +264,8 @@ class Window(DemoNavigation,Q.QWidget):
         self.target_offsets.changed.connect(self.target_offsets_changed)
         self.list=Q.QListWidget();self.list.setMinimumHeight(130);self.list.setMaximumHeight(260)
         self.list.currentItemChanged.connect(self.select);right.addWidget(self.list,1)
-        self.prepare=Q.QPushButton('复位并准备');self.prepare.clicked.connect(self.prepare_robot);actions.addWidget(self.prepare)
-        self.prepare.setToolTip('使用“姿态与动作→将当前姿态设为复位姿态”保存的全身目标，包含腰腿和夹爪；请先在新模块设置全身复位目标；速度与姿态执行共用。')
+        self.prepare=Q.QPushButton('开启抓取');self.prepare.clicked.connect(self.start_grasp_session);actions.addWidget(self.prepare)
+        self.prepare.setToolTip('从当前姿态开始识别物品，保留当前持物记录。')
         self.scan=Q.QPushButton('识别物品');self.scan.setObjectName('primary');self.scan.clicked.connect(lambda:self.send('scan'));right.addWidget(self.scan)
         self.point_select=Q.QPushButton('点选物体 · 不必知道名称')
         self.point_select.setToolTip('先定格当前画面，再点物体中心。直接分割轮廓并给出可编辑的建议名称。')
@@ -324,8 +325,8 @@ class Window(DemoNavigation,Q.QWidget):
         self.global_stop=Q.QPushButton('停止全部任务 / 动作');self.global_stop.setObjectName('stop')
         self.global_stop.clicked.connect(self.stop_motion);shell.addWidget(self.global_stop)
         if start_worker:
-            import yaml
-            cfg=yaml.safe_load((self.root/'config/grasp.yaml').read_text('utf-8'))
+            from .runtime_config import load_config
+            cfg=load_config(self.root)
             proc=C.QProcess(self);self.process=proc
             env=C.QProcessEnvironment.systemEnvironment()
             env.insert('LD_LIBRARY_PATH',str(Path(cfg['python']).parent.parent/'lib')+':'+env.value('LD_LIBRARY_PATH'))
@@ -345,7 +346,7 @@ class Window(DemoNavigation,Q.QWidget):
 
     def change_module(self,index):
         try:
-            if self.automatic.active or self.busy or self.motion or self.demo_active or self.placement_active or self.workflow.active or self.navigation.inflight:
+            if self.automatic.active or self.busy or self.motion or self.demo_active or self.placement_active or self.workflow.pending or self.navigation.inflight:
                 raise ValueError('当前操作未结束，请先停止或等待完成')
             if self.module_tabs.widget(index) is not self.pose_workspace and getattr(self.studio.engine,'manual_session',False):
                 self.studio.release()
@@ -418,10 +419,9 @@ class Window(DemoNavigation,Q.QWidget):
     def controls(self):
         idle=getattr(self,'parallel_prepare',None) is None and not self.busy and self.motion is None and not self.demo_active and not self.placement_active and not (hasattr(self,'studio') and self.studio.visual.busy)
         if hasattr(self,'workflow'):
-            idle=idle and not self.workflow.active and not self.workflow.base.moving() and self.module_tabs.currentIndex()==0 and not self.automatic_active()
+            idle=idle and not self.workflow.pending and not self.workflow.base.moving() and self.module_tabs.currentIndex()==0 and not self.automatic_active()
             self.flow_button.setEnabled(idle)
-            self.flow_retry.setEnabled(idle and self.workflow.retry_available and not self.cancel_pending
-                and not self.navigation.inflight and not self.studio.moving())
+            self.flow_retry.setEnabled(self.workflow.retry_available and self.workflow.channels_idle())
             row=self.workflow.cursor.step if self.workflow.retry_available else None
             detail=(f'从第{self.workflow.cursor.index+1}步「{row["target"]}」重试，成功后继续剩余步骤。' if row else '')
             self.flow_retry.setToolTip(detail+'已完成步骤不重复执行；重试使用停止前的任务版本，不使用未启动的编辑。')
@@ -460,7 +460,7 @@ class Window(DemoNavigation,Q.QWidget):
         item=next((v for v in self.items if v['id']==self.selected_id()),{})
         self.rim.setVisible(item.get('geometry')=='bag_edge')
         self.rim.setEnabled(idle and self.frozen and item.get('geometry')=='bag_edge')
-        if hasattr(self,'workflow') and not self.workflow.active and not self.demo.isChecked():
+        if hasattr(self,'workflow') and not self.workflow.pending and not self.demo.isChecked():
             # 真机入口取决于有效计划，不取决于手眼标定文件名是否非空。
             # URDF模式及未录入物品与已录入商品使用同一确认链路。
             pending=self.pending_plan or {}
@@ -487,7 +487,7 @@ class Window(DemoNavigation,Q.QWidget):
             # 新的独立预览不是上一任务的重试队列。仅所有旧执行器退出后
             # 结束旧取消状态；不能在旧动作或补偿仍运行时抹掉停止指令。
             clear=(not self.busy and not self.cancel_pending and self.motion is None
-                and getattr(self,'parallel_prepare',None) is None and not self.workflow.active
+                and getattr(self,'parallel_prepare',None) is None and not self.workflow.pending
                 and not self.demo_active and not self.placement_active and not self.automatic_active()
                 and not self.mobile_reach.active and self.mobile_reach.proc is None
                 and not self.workflow.base.moving() and not self.navigation.inflight
@@ -499,6 +499,8 @@ class Window(DemoNavigation,Q.QWidget):
         if action not in ('point_prepare','segment_point'):self._point_pick=False
         if action=='point_prepare':self._point_pick=True;self.picking_rim=False
         preparation=getattr(self,'parallel_prepare',None)
+        if action=='auto_prepare' or (getattr(self.workflow,'active',False) and action in ('prepare','plan')):
+            values['wait_for_feedback']=True
         if preparation is not None and action in ('plan','standalone_place'):
             values['parallel_prepare_token']=preparation.token
         if action=='plan':
@@ -513,6 +515,7 @@ class Window(DemoNavigation,Q.QWidget):
                                   if chosen else None)
         self.last_worker_request=(action,dict(values))
         self.request+=1;self.busy=True;self.cancel_pending=False;self.execute.setEnabled(False);self.video.path=[]
+        self.workflow.note_worker_request(self.request)
         self.overlay_revision=self.request;self.path_revision=None
         if action=='plan':
             self.auto_grasp_gate.arm(self.request,self.grasp_context(),
@@ -521,19 +524,12 @@ class Window(DemoNavigation,Q.QWidget):
         self.status.setText({'point_prepare':'正在获取点选画面…','segment_point':'正在分割所点物体并生成建议名称…','scan':'正在识别物品…','scan_task':'正在按任务物品识别并分割…','set_prompt':'按文字定位并分割物品…','plan':'正在定位和规划…','enroll':'保存商品样本…','prepare':'检查保存的全身复位姿态与路径…','remove_product':'正在删除商品…'}.get(action,'处理中…'))
         self.controls()
 
-    def prepare_robot(self):
+    def start_grasp_session(self):
         if self.busy or self.motion:return
-        from .workspace_reset import reset_path
-        if not reset_path(self.root).exists():
-            self.status.setText('请先进入“姿态与动作”，调好实机姿态后点击“将当前姿态设为复位姿态”。');return
-        from .pose_execution_profile import read_speed
-        summary='恢复“姿态与动作”中保存的全身姿态，包含腰腿高度；关节到位后恢复左右夹爪开度。\n'
-        if Q.QMessageBox.question(self,'复位并准备',summary+
-            f'姿态 / 复位共用速度：{read_speed(self.root):g}%。\n'
-            '若头部失能后低垂贴身，将先以约1°/秒抬到15°，复核无碰撞后再复位双臂。\n'
-            '请清空双爪与运动范围；低垂时需现场支撑头部、确认线缆无夹压，并有人看护急停。',
-            defaultButton=Q.QMessageBox.No)==Q.QMessageBox.Yes:
-            self.send('prepare',operator_supported_neck_recovery=True)
+        self.live()
+        self.items=[]
+        self.list.clear()
+        self.send('scan')
 
     def change_mode(self):
         if not self.ready:return
@@ -566,6 +562,14 @@ class Window(DemoNavigation,Q.QWidget):
                 self.busy=False;self.cancel_pending=False;self.status.setText('已取消本次操作，未开始新运动。');self.controls()
             return
         if self.automatic.defer_worker_event(data):return
+        if kind in ('cleanup_frame','cleanup_point','cleanup_save') or (
+                kind=='error' and getattr(self,'last_worker_request',('',{}))[0].startswith('cleanup_')):
+            self.busy=False
+            dialog=getattr(self,'cleanup_dialog',None)
+            if dialog:dialog.receive(data)
+            if kind=='error':self.status.setText(data['text'])
+            elif kind=='cleanup_save':self.status.setText('已保存垃圾样本：'+data['name'])
+            self.controls();return
         if kind=='base_reposition':self.mobile_reach.offer(data);return
         self.mobile_reach.worker_event(data)
         if kind=='status':self.status.setText(data['text']);return
@@ -600,13 +604,17 @@ class Window(DemoNavigation,Q.QWidget):
             self.view_text.setText('点选画面已定格 · 点击物体中心 · 点击“实时画面”取消')
             self.status.setText('请在图像中点击要抓取的物体，避开背景；无需输入名称。')
         elif kind=='reset_planned':
+            action,values=getattr(self,'last_worker_request',('',{}))
+            empty_confirmed=(action=='prepare' and data.get('request_id')==self.request
+                             and values.pop('operator_confirmed_empty_grippers',False) is True)
             self.live();self.items=[];self.list.clear()
             self.status.setText('保持式使能，按已检查顺序恢复准备姿态…')
             if data['blockers']:
                 self.status.setText('；'.join(data['blockers']))
                 if self.demo_active:self.demo_failure('；'.join(data['blockers']))
                 if self.automatic.active:self.stop_motion(reason='；'.join(data['blockers']),source='automatic_task')
-            else:self.launch_motion('last_reset_plan.json',preparing=True)
+            else:self.launch_motion('last_reset_plan.json',preparing=True,
+                                    **({'operator_confirmed_empty_grippers':True} if empty_confirmed else {}))
         elif kind=='observe_planned':
             if not (self.demo_active or self.placement_active) or self.demo_phase!='planning':return
             self.demo_context['observation_plan_id']=data['plan_id']
@@ -722,7 +730,9 @@ class Window(DemoNavigation,Q.QWidget):
 
     def execute_automatic_grasp(self,intent,plan_id):
         if self.automatic.active and self.automatic.paused:
-            self.automatic.deferred_event={'event':'planned'};return
+            from .task_pause import defer_call
+            defer_call(self,self.execute_automatic_grasp,intent,plan_id)
+            return
         data=self.pending_plan or {}
         if (not self.ready or self.busy or self.motion is not None or self.cancel_pending
             or self.demo.isChecked() or self.demo_active or self.placement_active
@@ -843,13 +853,15 @@ class Window(DemoNavigation,Q.QWidget):
         if self.workflow.active:self.workflow.phase='grasp'
         self.launch_motion(data['filename'])
 
-    def launch_motion(self,filename,preparing=False,placement=None):
+    def launch_motion(self,filename,preparing=False,placement=None,operator_confirmed_empty_grippers=False):
         if self.cancel_pending:return
         extra=[]
         if placement is not None:
             if not (self.demo_active or self.placement_active) or self.demo_phase not in ('place','observe'):return
             path=self.run/filename;extra=['--expected-plan-id',placement['plan_id'],'--expected-product-id',placement['product_id']]
-        elif preparing:path=self.root/'data'/filename
+        elif preparing:
+            path=self.root/'data'/filename
+            if operator_confirmed_empty_grippers:extra.append('--operator-confirmed-empty-grippers')
         else:
             data=self.pending_plan
             if not data or filename!=data['filename'] or data['target']['instance_id']!=self.selected_id():
@@ -857,18 +869,25 @@ class Window(DemoNavigation,Q.QWidget):
             path=self.run/filename
             extra=['--expected-plan-id',data['plan_id'],'--expected-product-id',data['target']['product_id']]
         parallel=getattr(self,'parallel_prepare',None)
+        self.workflow.mark_dispatch('prepare' if preparing else self.workflow.phase)
+        self.motion_execution_id=uuid.uuid4().hex
         if parallel is not None and not preparing:
             data=placement if placement is not None else self.pending_plan
-            parallel.submit(path,data['plan_id'],data['product_id'] if placement is not None else data['target']['product_id'])
+            parallel.submit(path,data['plan_id'],data['product_id'] if placement is not None else data['target']['product_id'],
+                            execution_id=self.motion_execution_id)
             return
-        self.preparing=preparing;self.motion=C.QProcess(self);self.motion.finished.connect(self.motion_finished)
-        self.motion.errorOccurred.connect(self.motion_error)
+        self.preparing=preparing;process=C.QProcess(self);self.motion=process
+        process.finished.connect(lambda *args:self.motion_finished(*args) if self.motion is process else None)
+        process.errorOccurred.connect(lambda error:self.motion_error(error) if self.motion is process else None)
+        process.finished.connect(process.deleteLater)
         self.motion.setProcessChannelMode(C.QProcess.MergedChannels)
         self.motion.readyReadStandardOutput.connect(self.motion_output)
         (self.run/'stop').unlink(missing_ok=True)
         (self.run/'execution_result.json').unlink(missing_ok=True)
+        (self.run/'execution_progress.json').unlink(missing_ok=True)
         if preparing:(self.run/'prepare_result.json').unlink(missing_ok=True)
-        self.motion.start('/usr/bin/python3',['-m','autolife_shelf_grasp_306.execution','--plan',str(path),'--run',str(self.run),*extra])
+        self.motion.start(sys.executable,['-m','autolife_shelf_grasp_306.execution','--plan',str(path),'--run',str(self.run),
+                         '--execution-id',self.motion_execution_id,*extra])
         self.execute.setEnabled(False);self.controls()
 
     def motion_error(self,error):
@@ -893,6 +912,11 @@ class Window(DemoNavigation,Q.QWidget):
         result_path=self.run/'execution_result.json'
         try:result=json.loads(result_path.read_text('utf-8')) if result_path.exists() else {}
         except (ValueError,OSError):result={}
+        expected=getattr(self,'motion_execution_id',None)
+        self.motion_execution_id=None
+        if expected and result.get('execution_id')!=expected:
+            result=dict(status='stopped',reason='运动回执缺失或不属于本次执行；请核对动作结果',
+                        reason_code='RECEIPT_MISMATCH',effect_certainty='may_have_executed',safe_to_retry=False)
         if self.automatic.prepared(result):return
         if self.workflow.motion_done(result):return
         if self.placement_active:
@@ -905,7 +929,13 @@ class Window(DemoNavigation,Q.QWidget):
                 self.finish_placement(result);return
             else:
                 self.status.setText('放置已停止：'+result.get('reason','前一阶段未成功，未继续动作。'))
-                if self.workflow.active:self.workflow.fail(self.status.text())
+                if self.workflow.active:
+                    expected=self.demo_context.get('observation_plan_id' if phase=='observe' else 'placement_plan_id')
+                    safe=(bool(expected) and result.get('plan_id')==expected and
+                          result.get('safe_to_retry') is True and result.get('effect_certainty')=='not_dispatched')
+                    if safe:self.workflow.cursor.effect='none'
+                    self.workflow.fail(self.status.text(),retryable=safe,
+                        await_input=safe and result.get('reason_code')=='FEEDBACK_UNAVAILABLE')
             self.controls();return
         if self.demo_active:
             if phase=='prepare' and result.get('status')=='prepared':
@@ -930,35 +960,62 @@ class Window(DemoNavigation,Q.QWidget):
 
     def finish_placement(self,result):
         self.live()
-        if self.workflow.active:
-            self.workflow.advance();return
+        if self.workflow.pending:
+            if (self.workflow.phase=='place' and
+                    result.get('plan_id')==self.demo_context.get('placement_plan_id')):
+                self.workflow.advance()
+            return
         self.status.setText('放置完成：已退离并恢复双臂，保持腰腿、头部和夹爪。' if result.get('placement_completion')=='withdraw_then_arms_reset' else '放置完成：已退出物品并保持当前位置，不自动复位。');self.controls()
 
     def stop_motion(self,checked=False,*,reason=None,source='operator'):
         reason=reason or '用户请求停止'
-        if hasattr(self,'mobile_reach'):self.mobile_reach.cancel()
-        if hasattr(self,'automatic'):self.automatic.abort(reason)
+        workflow=getattr(self,'workflow',None)
+        if (workflow and workflow.active and source not in ('operator','window_close','workflow_wait')):
+            workflow.fail(reason)
+            return
+        if workflow and workflow.pending and source not in ('operator','window_close'):
+            source='workflow_wait'
+        stop_errors=[]
+        try:
+            (self.run/'stop').touch()
+            self.stop_signal_failed=False
+        except OSError as exc:
+            self.stop_signal_failed=True
+            stop_errors.append('停止文件：'+str(exc))
+
+        def stop_channel(name, callback, *args):
+            try:callback(*args)
+            except Exception as exc:stop_errors.append(name+'：'+str(exc))
+
+        if hasattr(self,'mobile_reach'):stop_channel('底盘补偿',self.mobile_reach.cancel)
         from .core import atomic_json
         receipt=dict(time=time.time(),source=source,reason=reason,
             phase=getattr(getattr(self,'workflow',None),'phase',''))
-        if hasattr(self,'workflow'):self.workflow.base.stop()
-        if hasattr(self,'workflow') and self.workflow.active:
-            self.workflow.stopped(reason);self.flow_label.setText('任务流程已停止 · 可重试当前步骤')
-        if hasattr(self,'studio'):self.studio.stop()
-        if hasattr(self,'navigation'):self.navigation.command('stop')
+        if workflow:stop_channel('底盘',workflow.base.stop)
+        if hasattr(self,'studio'):stop_channel('示教',self.studio.stop)
+        if hasattr(self,'navigation'):stop_channel('导航',self.navigation.command,'stop')
+        if self.chassis_dialog:stop_channel('手动底盘',self.chassis_dialog.stop)
+        if source!='workflow_wait' and hasattr(self,'automatic'):stop_channel('自动任务',self.automatic.abort,reason)
+        if workflow and source!='workflow_wait' and workflow.pending:
+            stop_channel('任务',workflow.cancel,reason);self.flow_label.setText('任务已由用户停止')
         self.demo_active=False
         self.placement_active=False
         if self.motion is None:self.demo_phase=None
-        if self.chassis_dialog:self.chassis_dialog.stop()
         self.invalidate_plan()
         if self.busy and self.request>0:self.cancel_pending=True
-        (self.run/'stop').touch();self.execute.setEnabled(False)
+        receipt['stop_errors']=stop_errors
+        self.execute.setEnabled(False)
         try:atomic_json(self.run/'stop_reason.json',receipt)
         except OSError:pass  # Diagnostics must never prevent an actual stop.
-        self.status.setText(('已停止：'+reason+'。' if source!='operator' else '已请求停止；')+'危险时请按实体急停。')
+        detail=('；停止未完全确认：'+'，'.join(stop_errors)) if stop_errors else ''
+        self.status.setText(('当前步骤等待恢复：'+reason if source=='workflow_wait' else '已请求停止：'+reason)+detail)
         self.controls()
 
     def tick(self):
+        if getattr(self,'stop_signal_failed',False):
+            try:(self.run/'stop').touch()
+            except OSError:return  # No heartbeat until executors can see the stop.
+            self.stop_signal_failed=False
         (self.run/'heartbeat').touch()
         if self._point_pick:return
         packet=self.run/'preview.npz'
@@ -1004,7 +1061,7 @@ class Window(DemoNavigation,Q.QWidget):
         if self.mobile_reach.active or self.mobile_reach.proc is not None:
             self.stop_motion(reason='关闭补偿流程',source='window_close')
             self.status.setText('正在停止底盘补偿，请停稳后关闭');event.ignore();return
-        if self.demo_active or self.placement_active or self.workflow.active or self.automatic_active():
+        if self.demo_active or self.placement_active or self.workflow.pending or self.automatic_active():
             self.stop_motion(reason='关闭抓取窗口',source='window_close')
         if self.workflow.base.moving():
             self.workflow.base.shutdown()
@@ -1027,14 +1084,23 @@ def main():
     os.environ.setdefault('ROS_DOMAIN_ID','0')
     os.environ.setdefault('RMW_IMPLEMENTATION','rmw_cyclonedds_cpp')
     os.environ.setdefault('CYCLONEDDS_URI','<CycloneDDS><Domain><General><Interfaces><NetworkInterface name="lo"/></Interfaces></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>200</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>')
-    root=Path(os.environ.get('SHELF_GRASP_ROOT','/home/ubuntu/ros2_ws/src/autolife_shelf_grasp_306'))
+    from ament_index_python.packages import get_package_share_directory
+    root=Path(os.environ.get('SHELF_GRASP_ROOT') or get_package_share_directory('autolife_shelf_grasp_306'))
+    from .runtime_config import load_config
+    cfg=load_config(root)
+    os.environ.setdefault('ROBOT_ID',str(cfg['robot_id']))
+    from autolife_gui_runtime import configure_qt_plugins
+    configure_qt_plugins()
     app=Q.QApplication(sys.argv[:1]);app.setStyleSheet(STYLE)
     root.joinpath('data').mkdir(parents=True,exist_ok=True)
     # Single-instance guard only protects this app; no competing process killed.
     lock=C.QLockFile(str(root/'data/gui.lock'));lock.setStaleLockTime(0)
     if not lock.tryLock(100):Q.QMessageBox.information(None,'饮料抓取','饮料抓取窗口已经打开。');return
-    run=Path(tempfile.mkdtemp(prefix='shelf306_'))
-    window=Window(root,run);window.show();code=app.exec_();lock.unlock();sys.exit(code)
+    from .task_session import open_session
+    run,warning=open_session(root)
+    window=Window(root,run)
+    if warning:C.QTimer.singleShot(0,lambda:window.status.setText(warning))
+    window.show();code=app.exec_();lock.unlock();sys.exit(code)
 
 
 if __name__=='__main__':main()

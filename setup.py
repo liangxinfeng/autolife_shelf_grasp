@@ -7,6 +7,7 @@ setup(name=name, version='0.1.0', packages=find_packages(),
                   ('share/'+name, ['package.xml','README_ZH.md']),
                   ('share/'+name+'/config', glob('config/*.yaml')+glob('config/*.json')),
                   ('share/'+name+'/urdf', glob('urdf/*.urdf')+glob('urdf/*.srdf')),
+                  ('share/'+name+'/urdf/reference_models', glob('urdf/reference_models/*.urdf')),
                   ('share/'+name+'/launch', glob('launch/*.py'))],
       install_requires=['setuptools'], zip_safe=False,
       entry_points={'console_scripts':['shelf_grasp = autolife_shelf_grasp_306.app:main']})

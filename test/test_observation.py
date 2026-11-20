@@ -37,7 +37,7 @@ def test_base_anchor_requires_same_stationary_location():
 def test_observation_contract_never_accepts_release_or_wrong_grip(tmp_path):
     context=dict(grasp_plan_id='one',product_id='drink',settings={})
     record=dict(status='completed',plan_id='one',q={'Joint_Left_Gripper':160})
-    for n,v in [('demo_run.json',context),('demo_grasp_result.json',record),('demo_base_result.json',{'status':'completed'})]:
+    for n,v in [('demo_run.json',context),('held_object.json',record),('demo_base_result.json',{'status':'completed'})]:
         (tmp_path/n).write_text(json.dumps(v))
     plan=dict(kind='observe',plan_id='view1',place_protocol_version=1,observation_protocol_version=1,
               table_height_checked=True,parent_plan_id='one',product={'id':'drink'},demo_settings={},

@@ -1,0 +1,517 @@
+{
+  "version": 1,
+  "poses": {
+    "原初始复位姿态": {
+      "Joint_Neck_Roll": 0.0,
+      "Joint_Neck_Pitch": 0.0,
+      "Joint_Neck_Yaw": 0.0,
+      "Joint_Left_Shoulder_Inner": 20.0,
+      "Joint_Left_Shoulder_Outer": 0.0,
+      "Joint_Left_UpperArm": 0.0,
+      "Joint_Left_Elbow": -110.0,
+      "Joint_Left_Forearm": 0.0,
+      "Joint_Left_Wrist_Upper": 0.0,
+      "Joint_Left_Wrist_Lower": 0.0,
+      "Joint_Right_Shoulder_Inner": 20.0,
+      "Joint_Right_Shoulder_Outer": 0.0,
+      "Joint_Right_UpperArm": 0.0,
+      "Joint_Right_Elbow": -110.0,
+      "Joint_Right_Forearm": 0.0,
+      "Joint_Right_Wrist_Upper": 0.0,
+      "Joint_Right_Wrist_Lower": 0.0,
+      "Joint_Ankle": 0.04145622253417969,
+      "Joint_Knee": -0.004909515380859375,
+      "Joint_Waist_Pitch": -0.0024968928191810846,
+      "Joint_Waist_Yaw": -0.0041312226094305515,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 10.0
+    },
+    "复位": {
+      "Joint_Neck_Roll": -0.0764981210231781,
+      "Joint_Neck_Pitch": -0.010928303003311157,
+      "Joint_Neck_Yaw": -0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 20.00640869140625,
+      "Joint_Left_Shoulder_Outer": 0.0,
+      "Joint_Left_UpperArm": 0.010982944630086422,
+      "Joint_Left_Elbow": -109.98260498046875,
+      "Joint_Left_Forearm": -0.010928303003311157,
+      "Joint_Left_Wrist_Upper": -0.010928303003311157,
+      "Joint_Left_Wrist_Lower": -0.03278490900993347,
+      "Joint_Right_Shoulder_Inner": 19.303268432617188,
+      "Joint_Right_Shoulder_Outer": 0.1153564453125,
+      "Joint_Right_UpperArm": -0.07688061147928238,
+      "Joint_Right_Elbow": -110.4439926147461,
+      "Joint_Right_Forearm": 0.054641515016555786,
+      "Joint_Right_Wrist_Upper": 0.010928303003311157,
+      "Joint_Right_Wrist_Lower": 0.6884830594062805,
+      "Joint_Ankle": 0.09422492980957031,
+      "Joint_Knee": -0.01737213134765625,
+      "Joint_Waist_Pitch": 0.012575259432196617,
+      "Joint_Waist_Yaw": -0.005220775958150625,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 10.0
+    },
+    "抓取复位": {
+      "Joint_Neck_Roll": -0.12021133303642273,
+      "Joint_Neck_Pitch": 29.976825714111328,
+      "Joint_Neck_Yaw": 0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.68780517578125,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": 43.68780517578125,
+      "Joint_Right_Shoulder_Outer": 0.9118804931640625,
+      "Joint_Right_UpperArm": -0.9118576049804688,
+      "Joint_Right_Elbow": -121.80369567871094,
+      "Joint_Right_Forearm": 0.2294943630695343,
+      "Joint_Right_Wrist_Upper": 1.2130416631698608,
+      "Joint_Right_Wrist_Lower": -12.360074043273926,
+      "Joint_Ankle": -27.142940521240234,
+      "Joint_Knee": -55.3575325012207,
+      "Joint_Waist_Pitch": -28.929590225219727,
+      "Joint_Waist_Yaw": -0.005356969777494669,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 10.0
+    },
+    "抓取水瓶-2": {
+      "Joint_Neck_Roll": -0.12021133303642273,
+      "Joint_Neck_Pitch": 29.95496940612793,
+      "Joint_Neck_Yaw": 0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.68780517578125,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": -16.31494140625,
+      "Joint_Right_Shoulder_Outer": 7.564208984375,
+      "Joint_Right_UpperArm": -7.789147853851318,
+      "Joint_Right_Elbow": -58.87491989135742,
+      "Joint_Right_Forearm": 17.299776077270508,
+      "Joint_Right_Wrist_Upper": 4.9506306648254395,
+      "Joint_Right_Wrist_Lower": -16.5347957611084,
+      "Joint_Ankle": -27.140762329101562,
+      "Joint_Knee": -55.35674285888672,
+      "Joint_Waist_Pitch": -28.93117904663086,
+      "Joint_Waist_Yaw": -0.006310328841209412,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 236.25
+    },
+    "抓取水瓶-3": {
+      "Joint_Neck_Roll": -0.12021133303642273,
+      "Joint_Neck_Pitch": 29.976825714111328,
+      "Joint_Neck_Yaw": 0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.68780517578125,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": 43.68780517578125,
+      "Joint_Right_Shoulder_Outer": 0.9118804931640625,
+      "Joint_Right_UpperArm": -0.9118576049804688,
+      "Joint_Right_Elbow": -121.80369567871094,
+      "Joint_Right_Forearm": 0.2294943630695343,
+      "Joint_Right_Wrist_Upper": 1.2130416631698608,
+      "Joint_Right_Wrist_Lower": -12.360074043273926,
+      "Joint_Ankle": -27.140880584716797,
+      "Joint_Knee": -55.36127471923828,
+      "Joint_Waist_Pitch": -28.930633544921875,
+      "Joint_Waist_Yaw": -0.006446523126214743,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 236.25
+    },
+    "丢垃圾-1": {
+      "Joint_Neck_Roll": -0.12021133303642273,
+      "Joint_Neck_Pitch": 29.95496940612793,
+      "Joint_Neck_Yaw": 0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.67132568359375,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": 43.67132568359375,
+      "Joint_Right_Shoulder_Outer": 0.9173736572265625,
+      "Joint_Right_UpperArm": -0.9118576049804688,
+      "Joint_Right_Elbow": -121.80369567871094,
+      "Joint_Right_Forearm": 0.2513509690761566,
+      "Joint_Right_Wrist_Upper": 1.2348982095718384,
+      "Joint_Right_Wrist_Lower": -12.360074043273926,
+      "Joint_Ankle": -40.714027404785156,
+      "Joint_Knee": -83.03286743164062,
+      "Joint_Waist_Pitch": -43.396949768066406,
+      "Joint_Waist_Yaw": 0.042356379330158234,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 275.7382583618164
+    },
+    "丢垃圾-2": {
+      "Joint_Neck_Roll": -0.18578115105628967,
+      "Joint_Neck_Pitch": 29.93311309814453,
+      "Joint_Neck_Yaw": -0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.66033935546875,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": -30.9874267578125,
+      "Joint_Right_Shoulder_Outer": -29.608612060546875,
+      "Joint_Right_UpperArm": 29.08037757873535,
+      "Joint_Right_Elbow": -112.92684936523438,
+      "Joint_Right_Forearm": 6.240170001983643,
+      "Joint_Right_Wrist_Upper": 56.53298568725586,
+      "Joint_Right_Wrist_Lower": 66.5653305053711,
+      "Joint_Ankle": -40.713993072509766,
+      "Joint_Knee": -83.03327941894531,
+      "Joint_Waist_Pitch": -43.39712905883789,
+      "Joint_Waist_Yaw": 0.04240177944302559,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 275.8147621154785
+    },
+    "丢垃圾-3": {
+      "Joint_Neck_Roll": -0.18578115105628967,
+      "Joint_Neck_Pitch": 29.93311309814453,
+      "Joint_Neck_Yaw": -0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.66033935546875,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": -53.119720458984375,
+      "Joint_Right_Shoulder_Outer": -13.83203125,
+      "Joint_Right_UpperArm": 40.0885124206543,
+      "Joint_Right_Elbow": -62.456398010253906,
+      "Joint_Right_Forearm": 44.817626953125,
+      "Joint_Right_Wrist_Upper": 49.66990280151367,
+      "Joint_Right_Wrist_Lower": 29.867488861083984,
+      "Joint_Ankle": -40.71384048461914,
+      "Joint_Knee": -83.03340148925781,
+      "Joint_Waist_Pitch": -43.397178649902344,
+      "Joint_Waist_Yaw": 0.042356379330158234,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 275.8147621154785
+    },
+    "丢垃圾-4": {
+      "Joint_Neck_Roll": -0.18578115105628967,
+      "Joint_Neck_Pitch": 29.93311309814453,
+      "Joint_Neck_Yaw": -0.010928303003311157,
+      "Joint_Left_Shoulder_Inner": 43.66033935546875,
+      "Joint_Left_Shoulder_Outer": -0.9063720703125,
+      "Joint_Left_UpperArm": 0.9118576049804688,
+      "Joint_Left_Elbow": -121.80369567871094,
+      "Joint_Left_Forearm": -0.2513509690761566,
+      "Joint_Left_Wrist_Upper": -1.1911849975585938,
+      "Joint_Left_Wrist_Lower": -12.360074043273926,
+      "Joint_Right_Shoulder_Inner": -53.119720458984375,
+      "Joint_Right_Shoulder_Outer": -13.83203125,
+      "Joint_Right_UpperArm": 40.110477447509766,
+      "Joint_Right_Elbow": -62.456398010253906,
+      "Joint_Right_Forearm": 44.817626953125,
+      "Joint_Right_Wrist_Upper": 49.66990280151367,
+      "Joint_Right_Wrist_Lower": 29.867488861083984,
+      "Joint_Ankle": -40.71384048461914,
+      "Joint_Knee": -83.03340148925781,
+      "Joint_Waist_Pitch": -43.39712905883789,
+      "Joint_Waist_Yaw": 0.042356379330158234,
+      "Joint_Left_Gripper": 10.0,
+      "Joint_Right_Gripper": 108.97777777777779
+    }
+  },
+  "visual_bindings": {
+    "抓取水瓶-2": {
+      "reference": "d0c72a20c77dc8fe9127750802519a3330ca3406624e3fff0a93789664778259",
+      "side": "right",
+      "mode": "position",
+      "taught_object_pose": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.5320069942199204
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.2306305145053931
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.8660540354935037
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "relative_tcp": [
+        [
+          0.9972579916195059,
+          -0.06852658915529852,
+          -0.027939304389521635,
+          -0.008944987720653441
+        ],
+        [
+          0.07104018125944442,
+          0.9922423920597867,
+          0.1020212137062596,
+          0.04788707834419101
+        ],
+        [
+          0.020731396423171438,
+          -0.10372628393138333,
+          0.9943897964199611,
+          0.03408564266545444
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "丢垃圾-1": {
+      "reference": "73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a",
+      "side": "right",
+      "mode": "position",
+      "taught_object_pose": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.565871187481811
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.16392204488017803
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.7989800678074177
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "relative_tcp": [
+        [
+          0.999539969125125,
+          -0.00018037347424739917,
+          -0.03032849463382249,
+          -0.3158404607952799
+        ],
+        [
+          0.0001581654528429155,
+          0.9999997176388464,
+          -0.0007346467978275624,
+          -0.06344461969438772
+        ],
+        [
+          0.030328618581028918,
+          0.0007295119175306325,
+          0.9995397154227188,
+          0.060925343707831314
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "丢垃圾-2": {
+      "reference": "73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a",
+      "side": "right",
+      "mode": "position",
+      "taught_object_pose": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.565871187481811
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.16392204488017803
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.7989800678074177
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "relative_tcp": [
+        [
+          0.8173321886068956,
+          -0.5712863417165814,
+          -0.07483320944037346,
+          -0.10586308511764342
+        ],
+        [
+          0.0306846247056802,
+          -0.08653730255393895,
+          0.9957759532512119,
+          -0.03340315296752355
+        ],
+        [
+          -0.5753490655886501,
+          -0.8161759681801302,
+          -0.05320001589749392,
+          0.12070716572176443
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "丢垃圾-3": {
+      "reference": "73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a",
+      "side": "right",
+      "mode": "position",
+      "taught_object_pose": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.565871187481811
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.16392204488017803
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.7989800678074177
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "relative_tcp": [
+        [
+          0.8173053679849461,
+          -0.5714241439453425,
+          -0.07407012339212043,
+          0.044204014580727646
+        ],
+        [
+          -0.07022369006041433,
+          -0.2263709106439445,
+          0.9715064817943988,
+          -0.033659043922894705
+        ],
+        [
+          -0.5719095809804994,
+          -0.7888159852149063,
+          -0.22514167240239177,
+          0.09077340844065873
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "丢垃圾-4": {
+      "reference": "73a46f160db1e04635ecd99ebd936d1a9467da133d9198823ecb1b970b40842a",
+      "side": "right",
+      "mode": "position",
+      "taught_object_pose": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.565871187481811
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -0.16392204488017803
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.7989800678074177
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "relative_tcp": [
+        [
+          0.8172678706341313,
+          -0.5714476105375792,
+          -0.0743024632165285,
+          0.04417338792454839
+        ],
+        [
+          -0.07021842616927279,
+          -0.2267335285967692,
+          0.9714222972715671,
+          -0.033609949906961256
+        ],
+        [
+          -0.571963810267278,
+          -0.7886948303500848,
+          -0.22542817996778514,
+          0.0907097221496953
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  }
+}

@@ -12,7 +12,11 @@ def coherent_component(points):
     p=np.asarray(points,float)
     if len(p)<80:raise DepthQualityError('物体有效深度点不足')
     distances,indices=cKDTree(p).query(p,k=12)
-    dense=distances[:,-1]<.008
+    # Reflective and distant surfaces yield fewer returns per unit area.
+    # Estimate local sampling density without increasing the distance across
+    # which two points can actually be connected.
+    density_radius=np.clip(1.5*np.median(distances[:,-1]),.008,.016)
+    dense=distances[:,-1]<density_radius
     edges=(distances<.008)&dense[:,None]&dense[indices]
     rows=np.broadcast_to(np.arange(len(p))[:,None],indices.shape)[edges];cols=indices[edges]
     graph=coo_matrix((np.ones(len(rows)),(rows,cols)),shape=(len(p),len(p))).tocsr()
@@ -59,21 +63,45 @@ def projected_width(product,closing_axis):
     axes,extent=bbox(product);direction=np.asarray(closing_axis,float)
     norm=np.linalg.norm(direction)
     if not np.isfinite(norm) or norm<1e-8:raise ValueError('夹爪闭合方向无效')
-    return float(np.abs(axes.T@(direction/norm))@extent)
+    direction=direction/norm
+    if product.get('grasp_outline_measured'):
+        from .local_contact import prism
+        vertices,_=prism(product)
+        return float(2*np.max(np.abs(vertices@direction))+.004)
+    return float(np.abs(axes.T@direction)@extent)
+
+
+def coarse_yaws(yaws,preferred=()):
+    """Prioritize distinct approach directions; fine search keeps the exact headings."""
+    if not yaws:return []
+    hints=[yaw for angle in preferred if angle is not None for yaw in yaws if abs(yaw-angle)<1e-7]
+    broad=[min(yaws,key=lambda y:abs(y+35)),min(yaws,key=lambda y:abs(y-35)),min(yaws),max(yaws)]
+    result=[]
+    for yaw in hints+list(yaws[:2])+broad:
+        # Jaw width is invariant under 180 degrees; the pregrasp position is
+        # on the other side of the object. Compare directed headings here.
+        if all(abs((yaw-kept+180.)%360.-180.)>=1. for kept in result):
+            result.append(yaw)
+    return result
 
 
 def directional_yaws(product,cfg):
     """Prefer forward; cheaply skip jaws that cannot fit, before running IK."""
-    axes,_=bbox(product);base=float(cfg['approach_yaw_deg'])
+    axes,extent=bbox(product);base=float(cfg['approach_yaw_deg'])
     # The long axis is the approach axis when jaws close across the short side.
     up=np.asarray(cfg['up_torso'],float);long_axis=axes[:,1]
     # Invert horizontal_basis's projection, including torso -Z-up frames.
     raw=long_axis-up*(long_axis[2]/up[2]) if abs(up[2])>1e-6 else long_axis
     ideal=np.rad2deg(np.arctan2(raw[1],raw[0]))
     ideal=(ideal-base+90)%180-90
-    offsets=sorted(set([0.,float(ideal),*map(float,range(-90,91,5))]),key=lambda v:(abs(v),v))
+    # Keep a usable forward grasp first, then align along the measured long
+    # axis. Its narrow jaw projection can be missed by several grid headings.
+    grid=sorted(range(-90,91,5),key=lambda yaw:(abs(yaw),yaw))
+    offsets=dict.fromkeys([0.,float(ideal),*map(float,grid)])
     for offset in offsets:
         _,side,_=horizontal_basis(cfg['up_torso'],np.deg2rad(base+offset))
         # 包络已含4mm测量余量；预张开额外10mm由执行器按最大开口截取，
         # 不能再作为物品尺寸的硬门槛。
-        if projected_width(product,side)<=cfg['gripper_max_width_m']:yield offset
+        # horizontal_basis 返回单位闭合轴；当前物体的包络已在本轮入口验证。
+        width=projected_width(product,side) if product.get('grasp_outline_measured') else float(np.abs(side@axes)@extent)
+        if width<=cfg['gripper_max_width_m']:yield offset

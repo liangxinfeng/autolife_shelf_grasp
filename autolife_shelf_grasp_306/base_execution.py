@@ -1,4 +1,5 @@
 """Finite odometry sequence through the existing lease/deadman chassis helper."""
+from .runtime_identity import identity
 import argparse,json,math,subprocess,sys,threading,time
 from pathlib import Path
 import numpy as np
@@ -7,7 +8,7 @@ from .core import atomic_json
 
 def helper_command():
     # 与手动底盘窗口一致；不能继承缺少redis等依赖的视觉虚拟环境。
-    return ['/usr/bin/python3','-m','autolife_shelf_grasp_306.chassis','--fixed-sequence']
+    return [sys.executable,'-m','autolife_shelf_grasp_306.chassis','--fixed-sequence']
 
 
 def helper_exit_reason(code,path):
@@ -61,7 +62,7 @@ def main():
         def scan(m,front):
             try:
                 expected='s3_front_scan_frame' if front else 'rear_laser_frame'
-                if m.header.frame_id.lstrip('/')!=expected:raise ValueError('激光坐标系与345 S3安装方向不匹配')
+                if m.header.frame_id.lstrip('/')!=expected:raise ValueError('激光坐标系与配置的 S3 安装方向不匹配')
                 stamp=(m.header.stamp.sec,m.header.stamp.nanosec)
                 old=state['scans'].get(front)
                 if old and old[2]==stamp:return
@@ -69,9 +70,9 @@ def main():
                 state['scans'][front]=(time.monotonic(),points,stamp)
                 state['errors'].pop(front,None)
             except ValueError as exc:state['errors'][front]=str(exc)
-        node.create_subscription(Odometry,'/topic_gv_wheel_odom_0_345',odom,qos)
+        node.create_subscription(Odometry,f'/topic_gv_wheel_odom_{identity().topic_suffix}',odom,qos)
         for front,side in ((True,'front'),(False,'rear')):
-            node.create_subscription(LaserScan,f'/topic_gv_{side}_lidar_0_345',lambda m,f=front:scan(m,f),qos)
+            node.create_subscription(LaserScan,f'/topic_gv_{side}_lidar_{identity().topic_suffix}',lambda m,f=front:scan(m,f),qos)
         helper_log=(run/'base_helper.log').open('w')
         helper=subprocess.Popen(helper_command(),stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE,stderr=helper_log,text=True,bufsize=1)

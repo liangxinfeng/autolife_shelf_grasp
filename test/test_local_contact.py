@@ -25,6 +25,13 @@ def test_full_width_square_cannot_use_front_to_cheat():
     assert not candidates(p,cfg())
 
 
+def test_preopening_preference_does_not_exclude_contact_inside_aperture():
+    p=product()
+    p['measured_footprint_torso']=[[-.15,-.044,0],[-.15,.044,0],[.15,.044,0],[.15,-.044,0]]
+    choices=candidates(p,cfg())
+    assert choices and .085<choices[0]['required_opening_m']<=.095
+
+
 def test_fingertip_reach_and_symmetric_center_checked():
     p=product();a=np.array([-.03,0,0.])
     assert required_opening(p,a,np.eye(3))>required_opening(p,a-[.01,0,0],np.eye(3))

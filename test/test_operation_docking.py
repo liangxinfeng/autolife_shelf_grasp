@@ -70,7 +70,7 @@ def test_navigation_result_does_not_advance_outer_task(tmp_path):
 def test_placement_completion_does_not_send_prepare():
     from autolife_shelf_grasp_306.app import Window
     events=[]
-    owner=NS(live=lambda:events.append('live'),workflow=NS(active=False),
+    owner=NS(live=lambda:events.append('live'),workflow=NS(active=False,pending=False),
              status=NS(setText=lambda s:events.append(s)),controls=lambda:None,
              send=lambda *a,**k:pytest.fail('放置后不应发送复位'))
     Window.finish_placement(owner,{'status':'placed'})

@@ -1,5 +1,12 @@
 """Reassociate the user's selected instance, not a detector's transient ID."""
 import numpy as np
+from .auto_grasp import CandidateUnavailable
+
+
+def require_selected(selected,identity,*,task_scan,after_move):
+    if selected is not None:return selected
+    if task_scan and not after_move:raise CandidateUnavailable(identity['reason'])
+    raise ValueError(identity['reason'])
 
 
 def resolve_selected(chosen,fresh):

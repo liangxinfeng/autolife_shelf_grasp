@@ -16,9 +16,9 @@ def fixture(tmp_path):
     tcp={}
     for side,y in [('left',.3),('right',-.3)]:
         t=np.eye(4);t[:3,3]=[.6,y,.9];tcp['Link_'+side.title()+'_Wrist_Lower_to_Gripper']=t
-    geo=NS(path=model,frames=lambda q:tcp,tool_transform=lambda side:np.eye(4))
+    geo=NS(path=model,root='base',frames=lambda q:tcp,tool_transform=lambda side:np.eye(4))
     store=ReferenceStore(tmp_path/'library')
-    meta=dict(name='农夫山泉',object_pose=old.tolist(),model_sha256=hashlib.sha256(model.read_bytes()).hexdigest())
+    meta=dict(name='农夫山泉',frame='base',object_pose=old.tolist(),model_sha256=hashlib.sha256(model.read_bytes()).hexdigest())
     ident=store.save(meta,dict(image=np.zeros((20,20,3),np.uint8)))
     return store,ident,geo,old,tcp
 

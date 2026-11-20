@@ -4,6 +4,7 @@ import uuid
 import numpy as np
 from .bottle import object_points,horizontal_basis,image_cropped,estimate,DepthQualityError,cylinder_foreground
 from .core import unit
+from .auto_grasp import CandidateUnavailable
 from .object_extent import coherent_component,oriented_bounds,footprint_vertices,bbox
 
 
@@ -25,8 +26,8 @@ def same_target(chosen,fresh,session):
 def temporary_product(item,session):
     label=str(item.get('semantic_label','')).lower()
     words=set(re.findall(r'[a-z]+',label))
-    if words&{'person','hand','arm','human','cat','dog','table','tabletop','chair','bag','cloth','towel','rope'}:
-        raise ValueError('该目标不是可直接自动估尺寸的小型硬质物品；袋口等柔性目标请使用专门夹取点设置')
+    if words&{'person','hand','arm','human','cat','dog','table','tabletop','chair'}:
+        raise CandidateUnavailable('所选区域为人、动物或环境设施，请选择待抓物体')
     cylinder=bool(words&{'bottle','can'})
     return dict(id=target_id(item,session),name=item.get('name') or label or '未录入物品',
         temporary=True,geometry='cylinder' if cylinder else 'solid',category='beverage' if cylinder else 'general',
@@ -68,7 +69,17 @@ def visible_surface(local,low,high,basis,camera,measured_support=False):
     if support is not None:
         return dict(surface_evidence='irregular_visible_surface',**support,
                     view_elevation_deg=elevation,surface_volume_ratio=volume)
-    raise DepthQualityError('已有物体深度，但上部表面覆盖不足或仅看见单面，尚不能确认前后尺寸；请调整观察角度')
+    # The two measured sides can locate a grasp even when the top is occluded.
+    if np.all(high>low):
+        left=local[local[:,0]<=low[0]+.08*width,1:]
+        right=local[local[:,0]>=high[0]-.08*width,1:]
+        if min(len(left),len(right))>=12:
+            a,b=np.percentile(left,[5,95],axis=0);c,d=np.percentile(right,[5,95],axis=0)
+            overlap=(np.minimum(b,d)-np.maximum(a,c))/(high-low)[1:]
+            patch_area=min(np.linalg.eigvalsh(np.cov((patch/(high-low)[1:]).T))[0] for patch in (left,right))
+            if np.all(overlap>=.55) and patch_area>.01:
+                return dict(surface_evidence='opposed_side_patches',surface_coverage=overlap.tolist())
+    raise DepthQualityError('目标深度只覆盖单面，尚不能定位可夹取的两侧或上部轮廓')
 
 
 def upper_surface_support(local,low,high):
@@ -98,7 +109,7 @@ def upper_surface_support(local,low,high):
 def estimate_temporary(frame,mask,T,up,template,cfg,reference=None):
     if image_cropped(mask):
         return estimate_partial(frame,mask,T,up,template,cfg,reference)
-    points,pixels,bounds=object_points(frame,mask,T,cfg)
+    points,pixels,bounds=object_points(frame,mask,T,cfg,False)
     if template['geometry']=='cylinder':
         foreground=cylinder_foreground(points,pixels,up,cfg['gripper_max_width_m'])
         foreground_ratio=float(foreground.mean())
@@ -112,10 +123,16 @@ def estimate_temporary(frame,mask,T,up,template,cfg,reference=None):
             raise DepthQualityError(f'瓶身几何不通过：估算直径{width*1000:.1f}mm、高{height*1000:.1f}mm；'
                                     f'夹爪最大净开口{aperture*1000:.0f}mm。请核对物体点云与姿态模型')
         product={**template,'diameter_m':width,'height_m':float(height),'depth_m':width}
-        center,stats=estimate(frame,mask,T,up,product,cfg,observed=(points,pixels,bounds))
-        stats['bottle_foreground_ratio']=foreground_ratio
+        center,stats=estimate(frame,mask,T,up,product,cfg,observed=(points,pixels,bounds,foreground_ratio))
     else:
-        center,stats,points,pixels=solid_observation(frame,mask,T,up,template,cfg,points,pixels)
+        try:
+            center,stats,points,pixels=solid_observation(frame,mask,T,up,template,cfg,points,pixels)
+        except DepthQualityError as error:
+            if 'K' not in frame or 'D' not in frame:raise
+            from .supported_outline import estimate_outline
+            try:center,stats,points,pixels=estimate_outline(frame,mask,T,up,template,cfg,points,pixels)
+            except DepthQualityError as outline_error:
+                raise DepthQualityError(f'{error}；轮廓复核：{outline_error}') from outline_error
         product=stats['temporary_product']
     # 瓶身已有专用上下边界校验；普通物体则已通过主体、上表面和
     # 实测支撑面估计。不能再要求图像分割的上下边缘都有深度：纸巾的
@@ -214,7 +231,7 @@ def visible_cylinder_edges(frame,mask,T,up,points,pixels,body):
 
 def estimate_visible_cylinder(frame,mask,T,up,template,cfg):
     """没有尺寸历史也能按实测可见瓶身夹取；未见高度只作为保守包络上界。"""
-    points,pixels,bounds=object_points(frame,mask,T,cfg)
+    points,pixels,bounds=object_points(frame,mask,T,cfg,dense=False)
     keep=cylinder_foreground(points,pixels,up,cfg['gripper_max_width_m'])
     points,pixels=points[keep],pixels[keep]
     local,low,high,basis=measured_bounds(points,up,T[:3,3]);height=float(high[2]-low[2])
@@ -236,7 +253,7 @@ def estimate_visible_cylinder(frame,mask,T,up,template,cfg):
     product={**template,'diameter_m':width,'height_m':height,'depth_m':width,
              'dimension_source':'partial_current_rgbd','partial_geometry':True,
              'height_upper_bound_m':.4,'placement_bottom_observed':evidence['bottom_observed']}
-    center,stats=estimate(frame,mask,T,up,product,cfg,observed=(points,pixels,bounds))
+    center,stats=estimate(frame,mask,T,up,product,cfg,observed=(points,pixels,bounds,float(keep.mean())))
     product['height_m']=stats['observed_height_mm']/1000.
     if evidence['bottom_observed'] and evidence['top_observed']:
         product['height_upper_bound_m']=min(.4,product['height_m']+.005)
@@ -246,7 +263,7 @@ def estimate_visible_cylinder(frame,mask,T,up,template,cfg):
 
 
 def combine_product(template,samples):
-    if len(samples)<5:raise ValueError('未录入物品需要至少5帧可靠尺寸')
+    if not samples:raise ValueError('当前目标没有通过几何校验的 RGB-D 观测')
     products=[s[1]['temporary_product'] for s in samples]
     if any(p['id']!=template['id'] or p['geometry']!=template['geometry'] for p in products):
         raise ValueError('临时物品数据不一致，请重新识别')
@@ -291,4 +308,6 @@ def combine_product(template,samples):
         result.update(bbox_axes_torso=reference.tolist(),bbox_extents_m=extent.tolist())
         from .local_contact import merged_footprint
         result['measured_footprint_torso']=merged_footprint(products,[s[0] for s in samples],center,reference[:,2])
+        if all(stats.get('surface_evidence') in ('measured_midbody_and_silhouette','measured_midsection') for _,stats in samples):
+            result['grasp_outline_measured']=True
     return result

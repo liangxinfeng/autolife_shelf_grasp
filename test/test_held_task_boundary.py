@@ -9,12 +9,12 @@ from test_task_pause import qt,window
 def test_boundary_depends_on_first_manipulation(kinds,expected):
  assert starts_with_grasp({'steps':[{'kind':k} for k in kinds]}) is expected
 
-def test_new_grasp_task_does_not_inherit_independent_grasp(window):
+def test_new_grasp_task_preserves_previous_receipt_until_execution(window):
  w=window;p=w.run/'held_object.json';p.write_text('old manual grasp')
  with patch.object(Q.QMessageBox,'question',return_value=Q.QMessageBox.Yes):
   w.workflow.start({'steps':[dict(kind='grasp',target='纸巾')]})
- assert w.workflow.active and not p.exists()
- assert next((w.run/'held_history').iterdir()).read_text()=='old manual grasp'
+ assert w.workflow.active and p.read_text()=='old manual grasp'
+ assert not (w.run/'held_history').exists()
  assert w.test_commands==[] # 状态清理本身不会发布张爪/复位指令。
 
 def test_cancel_task_keeps_record(window):
@@ -28,11 +28,24 @@ def test_place_first_keeps_grasp_provenance(window):
  w.workflow.start({'steps':[dict(kind='place'),dict(kind='grasp',target='纸巾')]},confirmed=True)
  assert p.read_text()=='keep for placement'
 
-def test_failed_grasp_retry_can_clear_record_after_manual_removal(window):
+def test_failed_grasp_retry_preserves_receipt_during_planning(window):
  w=window;w.workflow.start({'steps':[dict(kind='grasp',target='纸巾')]},confirmed=True)
  w.workflow.phase='grasp';w.workflow.stopped('previous stop')
  p=w.run/'held_object.json';p.write_text('manually removed')
  with patch.object(Q.QMessageBox,'question',return_value=Q.QMessageBox.No):w.workflow.retry_current()
  assert p.exists() and not w.workflow.active
  with patch.object(Q.QMessageBox,'question',return_value=Q.QMessageBox.Yes):w.workflow.retry_current()
- assert w.workflow.active and not p.exists()
+ assert w.workflow.active and p.read_text()=='manually removed'
+
+
+def test_manual_reset_confirmation_is_forwarded_once_and_not_to_automatic_reset(window):
+ w=window;w.request=12
+ w.last_worker_request=('prepare',{'operator_confirmed_empty_grippers':True})
+ with patch.object(w,'launch_motion') as launch:
+  w.receive_event(dict(event='reset_planned',request_id=12,blockers=[]))
+  assert launch.call_args.kwargs==dict(preparing=True,operator_confirmed_empty_grippers=True)
+  w.receive_event(dict(event='reset_planned',request_id=12,blockers=[]))
+  assert launch.call_args.kwargs==dict(preparing=True)
+  w.request=13;w.last_worker_request=('auto_prepare',{'operator_confirmed_empty_grippers':True})
+  w.receive_event(dict(event='reset_planned',request_id=13,blockers=[]))
+  assert launch.call_args.kwargs==dict(preparing=True)

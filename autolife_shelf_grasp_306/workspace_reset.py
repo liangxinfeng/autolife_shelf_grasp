@@ -28,7 +28,7 @@ def resolve(root,cfg):
         result.pop(key,None)
     if not path.exists():return result
     raw=path.read_bytes();d=json.loads(raw)
-    if d.get('version')!=1 or d.get('robot_id')!=int(cfg['robot_id']):raise ValueError('复位姿态不属于本机，请重新设置')
+    if d.get('version')!=1:raise ValueError('复位姿态格式不支持，请重新设置')
     if d['urdf_sha256']!=hashlib.sha256(Path(cfg['urdf_path']).read_bytes()).hexdigest():raise ValueError('复位模型已改变，请重新设置复位姿态')
     q=checked_joints(d['joints_deg'])
     from control_center_joint_control.joint_definitions import group_joint_names

@@ -1,9 +1,18 @@
 """Small, testable adapter policy; no chassis commands or replacement planner."""
-import json, math
+import json, math, os
 from pathlib import Path
 import yaml
 
-NAV=Path('/home/ubuntu/ros2_ws/src/control_center_navigation')
+def navigation_root():
+    if os.environ.get('NAVIGATION_ROOT'):
+        return Path(os.environ['NAVIGATION_ROOT']).expanduser()
+    workspace=Path.home()/'ros2_ws/src/control_center_navigation'
+    if workspace.is_dir():return workspace
+    from ament_index_python.packages import get_package_share_directory
+    return Path(get_package_share_directory('control_center_navigation'))
+
+
+NAV=navigation_root()
 ACTIVE=NAV/'config/active_map.yaml'
 SUCCESS={'succeeded','short_distance_succeeded'}
 FAILED={'failed','rejected','canceled','cancelled','paused','undock_failed'}
@@ -182,6 +191,11 @@ class LocalizationGate:
             self.requested_pose=list(pose) if pose is not None else None
 
     def amcl(self,stamp,pose,cov):self.sample=(stamp,pose,cov)
+
+    def needs_stationary_scan(self):
+        """A scan queued before initialpose cannot confirm this request."""
+        return bool(self.pending and self.initial_stamp and
+                    (self.sample is None or self.sample[0] < self.initial_stamp))
 
     def navigation(self,data):
         if self.pending and data.get('state') in SUCCESS and float(data.get('stamp',0))>self.requested:

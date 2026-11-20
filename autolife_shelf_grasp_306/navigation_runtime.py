@@ -4,6 +4,8 @@ A backend launched here has its own UI+bridge watchdog and closes on owner
 loss. A pre-existing control-center backend keeps its original owner/lifecycle.
 Control-center process records make it discoverable to the service manager.
 """
+import sys
+from .runtime_identity import identity
 import fcntl
 import os
 from pathlib import Path
@@ -80,9 +82,9 @@ class NavigationRuntime:
                 if not Path(map_path).is_file():raise ValueError('当前地图文件不存在')
                 with (self.run/'navigation_backend.log').open('ab',buffering=0) as stream:
                     self.log_offset=stream.tell();self.log_tail=''
-                    process=subprocess.Popen(['/usr/bin/python3','/opt/ros/jazzy/bin/ros2','launch',
+                    process=subprocess.Popen([sys.executable,'/opt/ros/jazzy/bin/ros2','launch',
                         'control_center_navigation','bringup_all.launch.py','open_navigation_ui:=false',
-                        'text_voice_robot_id:=345','text_voice_ros_domain_id:=0','map_yaml:='+map_path,
+                        f'text_voice_robot_id:={identity().robot_id}',f'text_voice_ros_domain_id:={identity().domain_id}','map_yaml:='+map_path,
                         'operator_heartbeat_topic:=/grasp306/operator_heartbeat/'+self.run.name,
                         'operator_liveness_run:='+str(self.run)],
                         stdin=subprocess.DEVNULL,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)

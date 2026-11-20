@@ -45,17 +45,35 @@ def test_camera_and_extent_use_same_reference_frame():
     assert c['view_elevation_deg']==pytest.approx(a['view_elevation_deg'])
 
 
-def test_small_depth_noise_cannot_become_thickness(monkeypatch):
+def test_thin_visible_surface_does_not_invent_hidden_thickness(monkeypatch):
     import autolife_shelf_grasp_306.unregistered as module
     p=rounded_surface();p[:,2]*=.04
     pixels=np.c_[np.zeros(len(p)),np.linspace(1,99,len(p))]
     monkeypatch.setattr(module,'object_points',lambda *a:(p,pixels,(0,100)))
     mask=np.zeros((120,120),bool);mask[10:110,10:110]=True
     T=np.eye(4);T[:3,3]=[0,0,.6]
-    # The unchanged caller's size guard rejects a near-flat sheet before
-    # top-surface certification; that helper alone doesn't enforce size.
-    with pytest.raises(DepthQualityError,match='过薄'):
-        module.estimate_temporary({},mask,T,[0,0,1],{'geometry':'solid'}, {})
+    # Without a measured support plane, keep only the visible span. There is
+    # no blanket minimum height that would discard legitimate low objects.
+    _,stats=module.estimate_temporary({},mask,T,[0,0,1],{'geometry':'solid'}, {})
+    assert 0<stats['observed_height_mm']<2
+    assert stats['height_source']=='observed_object_midpoint'
+    assert 'measured_support' not in stats
+    assert stats['temporary_product']['height_m']*1000==pytest.approx(stats['observed_height_mm'])
+
+
+def test_small_depth_noise_at_measured_table_is_rejected(monkeypatch):
+    import autolife_shelf_grasp_306.unregistered as module
+    from autolife_shelf_grasp_306 import low_object_grasp
+    p=rounded_surface();p[:,2]*=.04
+    pixels=np.c_[np.zeros(len(p)),np.linspace(1,99,len(p))]
+    monkeypatch.setattr(module,'object_points',lambda *a:(p,pixels,(0,100)))
+    monkeypatch.setattr(low_object_grasp,'observe_support',lambda *a:
+        {'low_object_support':{'source':'local_rgbd_plane','normal':[0,0,1],
+            'offset':0.,'fit_residual_mm':1.}})
+    mask=np.zeros((120,120),bool);mask[10:110,10:110]=True
+    T=np.eye(4);T[:3,3]=[0,0,.6]
+    with pytest.raises(DepthQualityError,match='桌面无法区分'):
+        module.estimate_temporary({'depth':np.ones(mask.shape)},mask,T,[0,0,1],{'geometry':'solid'}, {})
 
 
 def test_solid_directly_below_camera_needs_no_horizontal_view_vector(monkeypatch):

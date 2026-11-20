@@ -1,4 +1,5 @@
 """短距离补偿时只读监测当前身体、相机深度和里程计；不输出关节指令。"""
+from .runtime_identity import identity
 import json
 import time
 import numpy as np
@@ -12,7 +13,7 @@ class ApproachWatch:
         from .camera import Camera
         self.request=request;self.q=None;self.stamp=0.;self.checked=0.;self.image_id=None
         self.camera=Camera(request['camera_cfg'],run/'mobile_depth_preview.jpg')
-        node.create_subscription(String,'/topic_arm_whole_body_and_gripper_current_joints_status_0_345',self.joints,qos_profile_sensor_data)
+        node.create_subscription(String,f'/topic_arm_whole_body_and_gripper_current_joints_status_{identity().topic_suffix}',self.joints,qos_profile_sensor_data)
 
     def joints(self,m):
         from autolife_handeye_calibration_306.core import ARMS,BODY,NECK

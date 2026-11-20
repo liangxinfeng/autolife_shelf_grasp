@@ -14,7 +14,8 @@ def test_deadline_prefix_covers_headings_positions_and_branches():
 
 def test_full_queue_is_unique_and_complete():
     entries=[(tuple(t),a,s) for t,a,s in placement_trials([np.zeros(3),np.ones(3)],2)]
-    assert len(entries)==2*17*2 and len(set(entries))==len(entries)
+    assert len(entries)==2*22*2 and len(set(entries))==len(entries)
+    assert {-90,90,180}.issubset({a for _,a,_ in entries})
     assert list(placement_trials([],2))==[]
 
 

@@ -97,27 +97,26 @@ def window(qt,tmp_path):
 
 def started(w):
     w.automatic.start('loop',confirmed=True)
-    assert w.automatic.phase=='preparing'
-    w.automatic.prepared(dict(status='prepared'))
+    assert w.automatic.phase=='running'
     assert w.workflow.active
 
 
-def test_new_round_checks_prepare_and_clears_only_boundary(window):
+def test_new_round_keeps_latest_grasp_until_replaced(window):
     w=window;(w.run/'held_object.json').write_text('old')
     w.automatic.start('loop',confirmed=True)
-    assert w.test_commands==[('auto_prepare',{})] and not w.workflow.active
-    assert not (w.run/'held_object.json').exists()
-    w.automatic.prepared(dict(status='prepared'))
+    assert w.test_commands==[] and w.workflow.active
+    assert (w.run/'held_object.json').read_text()=='old'
     (w.run/'held_object.json').write_text('new')
     w.automatic.tick();assert (w.run/'held_object.json').read_text()=='new'
     w.workflow.advance();w.automatic.deadline=0;w.automatic.tick()
-    assert not (w.run/'held_object.json').exists() and len(w.test_commands)==2
+    assert (w.run/'held_object.json').read_text()=='new' and w.test_commands==[]
 
 
-def test_prepare_failure_stops_no_navigation(window):
+def test_prepare_failure_preserves_task_without_navigation(window):
     w=window;w.automatic.start('single',confirmed=True)
-    w.automatic.prepared(dict(status='stopped',reason='测试失败'))
-    assert not w.automatic.active and not w.workflow.active
+    w.workflow.phase='prepare';w.workflow.mark_dispatch('prepare')
+    w.workflow.motion_done(dict(status='stopped',reason='测试失败'))
+    assert w.automatic.active and w.workflow.waiting and w.test_commands==[]
 
 
 def test_pause_countdown_frozen_and_second_click_resumes(window):

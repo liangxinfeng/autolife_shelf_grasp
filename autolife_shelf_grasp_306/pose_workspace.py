@@ -99,9 +99,16 @@ class PoseWorkspace(Q.QWidget):
                 if item.widget():second.addWidget(item.widget())
             self.model.layout().insertLayout(1,second);self.model.adjust_card.hide();self.model.hint.setWordWrap(True)
             self.model.joint_selected.connect(self.select_model_joint);self.model.joint_target_changed.connect(self.model_edit)
-            from .grip_width import load_curve
-            for side in ('left','right'):
-                widths,positions,_=load_curve({**self.studio.cfg,'arm':side});self.curves['Joint_'+side.title()+'_Gripper']=(widths,positions)
+            # 姿态示教保存原厂位置量，不依赖视觉抓取的毫米标定。
+            # 已配置毫米显示的其他部署仍可沿用各自有效的实测曲线。
+            if self.studio.cfg.get('pose_gripper_units', 'native') == 'mm':
+                from .grip_width import load_curve
+                for side in ('left','right'):
+                    try:
+                        widths,positions,_=load_curve({**self.studio.cfg,'arm':side})
+                    except (ValueError, OSError):
+                        continue
+                    self.curves['Joint_'+side.title()+'_Gripper']=(widths,positions)
             self.joint_changed()
         if not self.draft_checked:
             self.draft_checked=True
@@ -123,7 +130,7 @@ class PoseWorkspace(Q.QWidget):
     def joint_changed(self):
         n=self.joint.currentData()
         if not n:return
-        lo,hi=JOINT_LIMITS[n];unit=' °'
+        lo,hi=JOINT_LIMITS[n];unit=' 位置量' if n.endswith('_Gripper') else ' °'
         if n in self.curves:lo,hi=float(self.curves[n][0][0]),float(self.curves[n][0][-1]);unit=' mm'
         self.changing=True;self.value.setRange(lo,hi);self.value.setSuffix(unit);self.slider.setRange(round(lo*10),round(hi*10));self.changing=False
         if self.model:self.model.view.set_selected_joint(n)
@@ -137,7 +144,7 @@ class PoseWorkspace(Q.QWidget):
     def update_joint(self):
         n=self.joint.currentData();values=self.studio.feedback.values
         if n not in values:return
-        actual=self.display_value(n,values[n]);target=self.display_value(n,self.edits.get(n,values[n]));unit='mm' if n in self.curves else '°'
+        actual=self.display_value(n,values[n]);target=self.display_value(n,self.edits.get(n,values[n]));unit='mm' if n in self.curves else ('位置量' if n.endswith('_Gripper') else '°')
         held=getattr(self.studio.engine,'gripper_targets',{}).get(n)
         extra=f'　保持目标 {self.display_value(n,held):.1f} {unit}' if held is not None else ''
         self.actual.setText(f'实测 {actual:.1f} {unit}　→　预览 {target:.1f} {unit}'+extra)

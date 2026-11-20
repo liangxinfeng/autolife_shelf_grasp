@@ -8,6 +8,10 @@ NAME_GROUPS=(
  'mobile phone. mouse. remote control. charger. cable. scissors. tape roll. pen. book. key. glasses.',
  'apple. banana. orange. toy. stuffed toy. clothes hanger. spoon. fork. kettle. detergent bottle. trash can.')
 
+
+class NoPointMask(ValueError):
+    """The point prompt produced no usable object in the current image."""
+
 def point_pixel(x,y,shape):
     x,y=float(x),float(y);h,w=shape[:2]
     if not np.isfinite([x,y]).all() or not 0<=x<1 or not 0<=y<1:
@@ -25,7 +29,7 @@ def choose_mask(masks,qualities,pixel,quality_min=.5):
         component=components==components[y,x]
         if component.sum()<100 or component.mean()>.70:continue
         candidates.append((float(q),component))
-    if not candidates:raise ValueError('此点没有可靠物体轮廓，请点物体中心、避开背景或重新取景')
+    if not candidates:raise NoPointMask('此点没有可靠物体轮廓，请点物体中心、避开背景或重新取景')
     candidates.sort(key=lambda pair:pair[0],reverse=True)
     return candidates[0][1],candidates[0][0]
 
@@ -65,13 +69,15 @@ def _name_candidates(segmenter,image,mask):
     extra={'trash can':'垃圾桶','detergent bottle':'洗涤剂瓶','sponge':'海绵'}
     return (cn or extra.get(label,label)),ranked[0][2]
 
-def segment(perception,frame,store,x,y,*,describe=True):
+def segment(perception,frame,store,x,y,*,describe=True,box=None):
     from .core import crop_object,match
     segmenter=perception.segmenter
     if segmenter is None:raise ValueError('点选分割需要SAM2模型')
     image=frame['image'];pixel=point_pixel(x,y,image.shape);torch=segmenter.torch
+    prompt=dict(input_points=[[[list(pixel)]]],input_labels=[[[1]]])
+    if box is not None:prompt['input_boxes']=[[list(box)]]
     inputs=segmenter.sam_processor(images=cv2.cvtColor(image,cv2.COLOR_BGR2RGB),
-        input_points=[[[list(pixel)]]],input_labels=[[[1]]],return_tensors='pt').to(segmenter.device)
+        **prompt,return_tensors='pt').to(segmenter.device)
     with torch.inference_mode():outputs=segmenter.sam(**inputs,multimask_output=True)
     masks=segmenter.sam_processor.post_process_masks(outputs.pred_masks.detach().cpu(),inputs['original_sizes'])[0]
     masks=masks.numpy().reshape(-1,*image.shape[:2])
@@ -92,7 +98,7 @@ def segment(perception,frame,store,x,y,*,describe=True):
         detection_score=quality,mask_score=quality,suggested_name=suggestion or description,
         visual_description=description,naming_score=float(score),naming_error=naming_error)
 
-def reobserve(perception,frame,store,chosen):
+def reobserve(perception,frame,store,chosen,**prompt):
     """Fresh point mask, then the existing mask/appearance identity gate.
 
     The old image is never reused as grasp geometry. If the object moved away
@@ -100,7 +106,7 @@ def reobserve(perception,frame,store,chosen):
     """
     mask=np.asarray(chosen['mask'],np.uint8)
     dist=cv2.distanceTransform(mask,cv2.DIST_L2,5);y,x=np.unravel_index(np.argmax(dist),dist.shape)
-    item=segment(perception,frame,store,(x+.5)/mask.shape[1],(y+.5)/mask.shape[0],describe=False)
+    item=segment(perception,frame,store,(x+.5)/mask.shape[1],(y+.5)/mask.shape[0],describe=False,**prompt)
     item.update(name=chosen['name'],suggested_name=chosen.get('suggested_name',''),
                 visual_description=chosen.get('visual_description',''))
     return [item]

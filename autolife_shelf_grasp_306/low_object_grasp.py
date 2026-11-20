@@ -125,7 +125,12 @@ def contact_orientation(planner,source,physical_tcp,offset,center,product,yaw):
 def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
     tool=Rotation.from_quat(planner.cfg['T_wrist_tool_quat_xyzw']).as_matrix()
     _,R0=planner.pose(source,tcp);u=np.asarray(planner.cfg['up_torso'])
-    short=enabled(product,planner.cfg);angles=planner.cfg.get('low_object_pitch_candidates_deg',[35.,45.,55.,65.,75.]) if short else [0.]
+    short=enabled(product,planner.cfg)
+    surface=product.get('low_object_support')
+    tilted=(not short and surface is not None and surface.get('source')=='local_rgbd_plane'
+            and not product.get('partial_geometry') and product.get('geometry')!='bag_edge'
+            and hasattr(planner,'grasp_attitude_feasible'))
+    angles=planner.cfg.get('low_object_pitch_candidates_deg',[35.,45.,55.,65.,75.]) if short else ([0.,15.,30.] if tilted else [0.])
     if not angles or any(not np.isfinite(a) or not 0<float(a)<80 for a in angles) and short:
         raise ValueError('低物体俯角候选应在0～80度之间')
     if short and not getattr(planner,'_reach_quick_probe',False):
@@ -137,33 +142,40 @@ def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
         lower=max(1,int(np.floor(min(coarse)-10)))
         upper=min(79,int(np.ceil(max(coarse)+5)))
         angles += [float(a) for a in range(lower,upper+1) if a not in angles]
-    vertices=gripper_vertices(planner)-np.asarray(tcp) if short else None
-    surface=product.get('low_object_support') if short else None
+    check_surface=short or tilted
+    vertices=gripper_vertices(planner)-np.asarray(tcp) if check_surface else None
     if short and surface is None:surface=support(product,center,u)['low_object_support']
     margin=float(planner.cfg.get('low_object_table_clearance_m',.003))
-    attitudes=[]
-    for pitch in angles:
-        B=basis(u,yaw,pitch)
-        candidates=[B@tool.T,B@np.diag([1.,-1.,-1.])@tool.T]
-        candidates.sort(key=lambda R:Rotation.from_matrix(R0.T@R).magnitude())
-        for rank,R in enumerate(candidates):attitudes.append((rank,pitch,B,R))
-    # 优先完成连续臂形的一组朝向，再尝试翻转180度的夹爪；不删除翻转候选。
-    if hasattr(planner,'grasp_attitude_feasible'):attitudes.sort(key=lambda row:row[0])
+    cache=getattr(planner,'_heading_cache',None)
+    key=(yaw,tuple(angles),tuple(u),tuple(tool.flat),tuple(R0.flat),hasattr(planner,'grasp_attitude_feasible'))
+    attitudes=cache.get(key) if cache is not None else None
+    if attitudes is None:
+        attitudes=[]
+        for pitch in angles:
+            B=basis(u,yaw,pitch)
+            candidates=[B@tool.T,B@np.diag([1.,-1.,-1.])@tool.T]
+            candidates.sort(key=lambda R:Rotation.from_matrix(R0.T@R).magnitude())
+            for rank,R in enumerate(candidates):attitudes.append((rank,pitch,B,R))
+        if hasattr(planner,'grasp_attitude_feasible'):attitudes.sort(key=lambda row:row[0])
+        if cache is not None:cache[key]=attitudes
     geometry_available=False
     for _,pitch,B,R in attitudes:
-        clearance=None if not short else float(np.min((vertices@R.T+center)@np.array(surface['normal']))-surface['offset'])
+        clearance=None if not check_surface else float(np.min((vertices@R.T+center)@np.array(surface['normal']))-surface['offset'])
         shift=0.
         if short and adjust_height:
             needed=max(0.,margin+.003-clearance)/max(.1,float(u@np.asarray(surface['normal'])))
             # 只在已观测物体内部上移夹取中心，保留顶面以下2mm；物体整体模型不缩小。
             if needed<=max(0.,float(product['height_m'])/2-.002):shift=needed
-        if not short or clearance+shift*float(u@np.asarray(surface['normal']))>=margin+.003-1e-9:
+        if not check_surface or clearance+shift*float(u@np.asarray(surface['normal']))>=margin+.003-1e-9:
             geometry_available=True
             feasible=getattr(planner,'grasp_attitude_feasible',None)
-            if short and feasible is not None:
+            if check_surface and feasible is not None:
                 virtual_tcp=np.asarray(tcp)-R.T@u*shift
                 if not feasible(source,virtual_tcp,center,R,product):continue
             return R,B[:,0],float(pitch),None if clearance is None else clearance+shift*float(u@np.asarray(surface['normal'])),shift
+    if tilted:
+        from .planning import IKFailure
+        raise IKFailure('该入射方向的手腕逆解、桌面净空或持物收回姿态未通过')
     if geometry_available:
         raise ContactReachFailure('已找到离桌朝向，但未找到与当前关节范围及收回姿态兼容的抓取逆解')
     raise TableContactFailure('低矮物体的抓点离桌面过近，倾斜后夹爪仍可能触桌；请向上微调抓点或调整物体位置')
@@ -171,7 +183,8 @@ def orientation(planner,source,tcp,center,product,yaw,adjust_height=False):
 
 def check_clearance(planner,q,tcp,product):
     if not getattr(planner,'_low_object_grasp_active',False):return
-    if not enabled(product,planner.cfg) or 'low_object_support' not in product:return
+    if 'low_object_support' not in product:return
+    if not enabled(product,planner.cfg) and product['low_object_support'].get('source')!='local_rgbd_plane':return
     surface=product['low_object_support'];up=np.array(surface['normal']);c=np.array(surface['center'])
     # pose()返回本次规划起点的躯干系；原厂腰臂协同时也保持这个固定参考。
     p,R=planner.pose(q,tcp);points=(gripper_vertices(planner)-np.asarray(tcp))@R.T+p

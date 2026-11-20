@@ -27,7 +27,8 @@ def test_camera_reuse_only_identical_nominal_optical_chain():
  assert same_nominal_camera(a,b)
  for key,val in [('geometry_source','calibrated'),('urdf_sha256','other'),('geometry_version',1),('T_mount_camera',np.zeros((4,4)).tolist())]:
   changed=copy.deepcopy(b);changed[key]=val;assert not same_nominal_camera(a,changed)
- for key,val in [('robot_id',300),('head_offsets_deg',[1,0,0])]:
+ changed=copy.deepcopy(b);changed['config']['robot_id']='another-controller';assert same_nominal_camera(a,changed)
+ for key,val in [('head_offsets_deg',[1,0,0])]:
   changed=copy.deepcopy(b);changed['config'][key]=val;assert not same_nominal_camera(a,changed)
  assert not same_nominal_camera({}, {})
 
@@ -44,3 +45,14 @@ def test_gripper_geometry_frozen_only_inside_one_planning_call(monkeypatch):
  p=P();assert p.plan()[0][0,0]==90
  p.cfg={**p.cfg,'width':80};assert p.plan()[0][0,0]==80
  assert calls==[90,80] and p._request_gripper_vertices is None
+
+
+def test_geometry_digest_ignores_routing_identity_only():
+ from autolife_shelf_grasp_306.grasp_geometry import profile_digest
+ a=dict(geometry_source='urdf',urdf_sha256='model',T_mount_camera=np.eye(4).tolist(),
+        config=dict(robot_id=1,arm='left',head_offsets_deg=[0,0,0]))
+ b=copy.deepcopy(a);b['config']['robot_id']=2
+ assert profile_digest(a)==profile_digest(b)
+ assert a['config']['robot_id']==1
+ b['T_mount_camera'][0][3]=.01
+ assert profile_digest(a)!=profile_digest(b)

@@ -16,7 +16,7 @@ def test_completed_corrected_action_dispatches_next_waypoint_once(monkeypatch,tm
     monkeypatch.setattr(C.QTimer,'singleShot',lambda ms,fn:fn())
     monkeypatch.setattr('autolife_shelf_grasp_306.task_flow_ui.require_perception',lambda *a:None)
     class Flow:
-        next=Workflow.next;advance=Workflow.advance;send_navigation=Workflow.send_navigation
+        next=Workflow.next;advance=Workflow.advance;send_navigation=Workflow.send_navigation;mark_dispatch=Workflow.mark_dispatch
         def __init__(self,owner):
             self.owner=owner;self.cursor=Cursor({'steps':[dict(kind='action',target='丢垃圾全程'),dict(kind='navigate',target='桌子1')]})
             self.phase='action';self.posture_resume=None;self.map='map'

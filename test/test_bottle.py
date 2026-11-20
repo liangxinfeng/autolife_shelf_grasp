@@ -103,4 +103,5 @@ def test_multiframe():
     samples=[(np.array([.6,.1,-.2]),{'observed_height_mm':219}) for _ in range(5)]
     c,stats=combine(samples);assert stats['support_required'] is False
     samples[-1]=(c+[.03,0,0],samples[-1][1])
-    with pytest.raises(ValueError,match='10mm'):combine(samples)
+    _,stats=combine(samples);assert stats['frames']==4
+    with pytest.raises(ValueError):combine([samples[0],samples[-1]])

@@ -3,7 +3,6 @@ import json
 import math
 import uuid
 from .core import atomic_json
-from .pose_handoff import HELD_JAW_TOLERANCE_DEG
 from .arm_selection import gripper_name,require_same_arm
 
 
@@ -49,5 +48,5 @@ def check_held_gripper(q,record):
     jaw=gripper_name(record.get('arm','left'))
     held=float(record.get('q',{}).get(jaw,float('nan')))
     current=float(q.get(jaw,float('nan')))
-    if not math.isfinite(held) or not math.isfinite(current) or abs(current-held)>HELD_JAW_TOLERANCE_DEG:
-        raise ValueError('夹爪状态与抓取结束时不同，请确认物品，不能自动放置')
+    if not math.isfinite(held) or not math.isfinite(current):
+        raise ValueError('持物夹爪的反馈或抓取记录无效')

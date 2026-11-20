@@ -1,12 +1,12 @@
 import pytest
 from autolife_shelf_grasp_306.task_flow import validate
-from autolife_shelf_grasp_306.step_posture import normalize,targets,permitted_navigation_joints
+from autolife_shelf_grasp_306.step_posture import normalize,targets,permitted_navigation_joints,head_pitch_limits
 
 def test_old_flow_unchanged():
     row=dict(kind='grasp',target='水瓶')
     assert validate(dict(steps=[row]))==dict(version=1,steps=[row])
 
-@pytest.mark.parametrize('mode,height,pitch',[('forward',56,45),('reverse',53,-30),('keep',0,0)])
+@pytest.mark.parametrize('mode,height,pitch',[('forward',56,head_pitch_limits()[1]),('reverse',53,head_pitch_limits()[0]),('keep',0,0)])
 def test_round_trip_and_sign(mode,height,pitch):
     p=dict(body_mode=mode,lowering_cm=height,head_pitch_deg=pitch)
     r=validate(dict(steps=[dict(kind='navigate',target='前台',posture=p)]))
@@ -15,12 +15,12 @@ def test_round_trip_and_sign(mode,height,pitch):
     if mode!='keep':assert q['Joint_Knee']*(1 if mode=='forward' else -1)>0
 
 @pytest.mark.parametrize('p',[dict(body_mode='reverse',lowering_cm=54),dict(body_mode='forward',lowering_cm=57),
- dict(head_pitch_deg=46),dict(head_pitch_deg=-31),dict(head_pitch_deg=float('nan')),dict(lowering_cm=float('inf')),dict(body_mode='bad')])
+ dict(head_pitch_deg=head_pitch_limits()[1]+.1),dict(head_pitch_deg=head_pitch_limits()[0]-.1),dict(head_pitch_deg=float('nan')),dict(lowering_cm=float('inf')),dict(body_mode='bad')])
 def test_bad_settings_rejected(p):
     with pytest.raises(ValueError):normalize(p)
 
 def test_nav_corridor_reverse_forward_and_arms_not_exempt():
-    start=targets(dict(body_mode='reverse',lowering_cm=30,head_pitch_deg=30))
+    start=targets(dict(body_mode='reverse',lowering_cm=30,head_pitch_deg=min(20,head_pitch_limits()[1])))
     setting=dict(body_mode='forward',lowering_cm=40,head_pitch_deg=0);end=targets(setting)
     for t in (0,.1,.5,.8,1):
         q={n:start[n]+t*(end[n]-start[n]) for n in start}

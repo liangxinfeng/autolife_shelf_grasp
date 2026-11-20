@@ -1,4 +1,5 @@
 """Hold-to-drive dialog; camera stays visible behind it. No motion on opening."""
+import sys
 import json
 import math
 import time
@@ -42,7 +43,7 @@ class ChassisDialog(Q.QDialog):
             self.proc.readyReadStandardError.connect(self.log)
             self.proc.finished.connect(lambda *_:self.failed('底盘控制进程已退出'))
             self.proc.errorOccurred.connect(lambda _:self.failed('底盘控制进程不可用'))
-            self.proc.start('/usr/bin/python3',['-m','autolife_shelf_grasp_306.chassis'])
+            self.proc.start(sys.executable,['-m','autolife_shelf_grasp_306.chassis'])
         self.timer=C.QTimer(self);self.timer.timeout.connect(self.tick);self.timer.start(50)
 
     def available(self):return self.last_status and time.monotonic()-self.last_status<.6

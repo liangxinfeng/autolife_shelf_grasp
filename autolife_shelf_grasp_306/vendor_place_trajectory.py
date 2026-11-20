@@ -106,16 +106,14 @@ def execute_blocks(node,plan,checked,clock,release_gripper,hold,report,endpoint_
         adapter.on_sample=progress
         trajectory_function(adapter,[[q[n] for n in BODY+ARMS['left']+ARMS['right']] for q in block['waypoints']],
             duration=block['duration_sec'],excluded_joints_name=BODY[:2],rate_hz=60.)
-        endpoint=block['waypoints'][-1];deadline=clock()+5.;stable=None
-        while True:
-            q=checked();now=clock();error=max(abs(q[n]-endpoint[n]) for n in names)
-            valid=error<=(.35 if block['release_after'] else .7) and endpoint_ok(q,endpoint,block['release_after'])
-            if valid:
-                if stable is None:stable=now
-                if now-stable>=.15:break
-            else:stable=None
-            progress(q,endpoint)
-            if now>deadline:raise ValueError(f'放置终点尚未到位，保持夹持：{block["name"]}，关节偏差{error:.2f}°')
+        from .phase_arrival import PLACE_LANDING,PLACE_TRANSFER,wait_endpoint
+        endpoint=block['waypoints'][-1]
+        policy=PLACE_LANDING if block['release_after'] else PLACE_TRANSFER
+        def arrival_report(value):
+            report(dict(value,planned_sec=block['duration_sec'],elapsed_sec=clock()-start,
+                execution_backend='vendor_place_trajectory_v1',position_sync_active=True))
+        wait_endpoint(checked,clock,endpoint,names,policy,label=block['name'],
+            geometry_ok=lambda q:endpoint_ok(q,endpoint,block['release_after']),report=arrival_report)
         if block['release_after']:
             # 唯一松爪边界；取消、通信失败、未到位均不能越过这里。
             release_gripper()

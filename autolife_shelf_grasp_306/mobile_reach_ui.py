@@ -44,6 +44,7 @@ class MobileReach(C.QObject):
             from .operation_docking import validate
             validate(self.pending,self.pending['token'])
             self.execute_after=True
+            o.workflow.mark_dispatch('mobile_prepare')
             if getattr(o,'parallel_prepare',None) is None:
                 from .parallel_prepare_ui import start
                 start(o,self.pending['kind'])
@@ -85,13 +86,13 @@ class MobileReach(C.QObject):
     def move(self):
         o=self.owner;self.stage='moving';self.deadline=time.monotonic()+130
         request=self.pending
+        o.workflow.mark_dispatch('operation_dock')
         o.navigation.command('navigate',name=request['chain_name'],map=request['map'],
             run_id=request['token'],leg='operation_dock',operation_token=request['token'],workflow=o.workflow.active)
         o.status.setText('正在导航到已验证的操作停靠点 · 保持双臂与夹持')
 
     def navigation_event(self,data):
         if data.get('leg')=='operation_dock' and not self.pending:
-            if data.get('event')=='nav_done':self.owner.navigation.inflight=False
             return True
         if not self.pending or data.get('run_id')!=self.pending['token']:return False
         if data.get('event')=='nav_started':return True
