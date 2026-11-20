@@ -2571,8 +2571,8 @@
       "source": "installed"
     },
     "data/cleanup_types.json": {
-      "sha256": "446a8bb2c5b7cb8de410be6cedae901632646b37be615a1de0a3bbf6d62f3d16",
-      "size": 136193,
+      "sha256": "f4008af696e0b22e73941c96711edde1f7e8dc380ac464488bf04b8073d3fb39",
+      "size": 370650,
       "mode": "644",
       "source": "active-data"
     },
